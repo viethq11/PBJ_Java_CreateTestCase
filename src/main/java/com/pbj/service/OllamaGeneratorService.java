@@ -53,7 +53,7 @@ public class OllamaGeneratorService {
             HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(requestBody), headers);
             ResponseEntity<String> response = buildRestTemplate().postForEntity(url, entity, String.class);
             JsonNode root = objectMapper.readTree(response.getBody());
-            return stripMarkdownFences(root.path("response").asText(""));
+            return sanitizeCppGenerator(root.path("response").asText(""));
         } catch (Exception e) {
             throw new RuntimeException("Ollama generator failed: " + e.getMessage(), e);
         }
@@ -74,6 +74,8 @@ public class OllamaGeneratorService {
 
                 Generate C++17 generator using ONLY this JSON spec.
                 If information is missing, choose the safest valid interpretation.
+                The input format is authoritative. Match it exactly and do not add extra sections.
+                The validator rules are authoritative. Every generated testcase must pass them.
 
                 JSON spec:
                 %s
@@ -118,6 +120,7 @@ public class OllamaGeneratorService {
                 - Can any loop become infinite?
 
                 If any answer is no, rewrite the generator.
+                Do not include markdown fences, comments outside code, special tokens, BOS/EOS markers, or prose.
                 Return ONLY the C++17 generator code.
                 """.formatted(generatorSpecJson == null ? "{}" : generatorSpecJson);
     }
@@ -138,12 +141,15 @@ public class OllamaGeneratorService {
                 Fix the generator.
                 Rules:
                 - Return only corrected C++17 code.
+                - Match the JSON input_format exactly. Do not add arrays, edges, queries, or sections unless the input_format requires them.
+                - The corrected generator must pass the validator for small, medium, large, and stress.
                 - Never print node 0.
                 - For graph nodes, all node ids must be generated in 1..N.
                 - If a field is binary, print only 0 or 1.
                 - Keep M inside constraints.
                 - Do not use unbounded retry loops.
                 - The generator must accept argv[1]=seed and argv[2]=size_level.
+                - Do not include markdown fences, special tokens, BOS/EOS markers, or prose.
                 """.formatted(
                 generatorSpecJson == null ? "{}" : generatorSpecJson,
                 validationError == null ? "Unknown validation error" : validationError,
@@ -165,5 +171,46 @@ public class OllamaGeneratorService {
             return matcher.group(1).trim();
         }
         return text.trim();
+    }
+
+    private String sanitizeCppGenerator(String text) {
+        String code = stripMarkdownFences(text);
+        if (code.isBlank()) return code;
+
+        code = code.replaceAll("(?s)<[^>]*(begin|end|bos|eos)[^>]*>", "");
+        code = code.replace("<s>", "").replace("</s>", "");
+        code = code.replaceAll("[^\\x00-\\x7F]", "");
+
+        int includeIdx = code.indexOf("#include");
+        int mainIdx = code.indexOf("int main");
+        if (includeIdx >= 0) {
+            code = code.substring(includeIdx);
+        } else if (mainIdx >= 0) {
+            code = "#include <bits/stdc++.h>\nusing namespace std;\n" + code.substring(mainIdx);
+        }
+
+        int lastBrace = code.lastIndexOf('}');
+        if (lastBrace >= 0 && lastBrace + 1 < code.length()) {
+            code = code.substring(0, lastBrace + 1);
+        }
+
+        code = code.trim();
+        if (containsModelSpecialToken(code)) {
+            throw new RuntimeException("Generator contains model special tokens after sanitization.");
+        }
+        return code;
+    }
+
+    private boolean containsModelSpecialToken(String code) {
+        if (code == null) return false;
+        String lower = code.toLowerCase();
+        return code.contains("<|")
+                || code.contains("|>")
+                || code.contains("<｜")
+                || code.contains("｜>")
+                || lower.contains("begin_of_sentence")
+                || lower.contains("end_of_sentence")
+                || lower.contains("beginofsentence")
+                || lower.contains("endofsentence");
     }
 }

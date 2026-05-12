@@ -20,6 +20,9 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class AiIntegrationService {
+    private static final String ANALYSIS_CACHE_PREFIX = "ollama_analysis_v3_schema_contract_";
+    private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v4_no_generator_schema_";
+    private static final String PIPELINE_CACHE_PREFIX = "ollama_gemini_ollama_generator_pipeline_v6_";
 
     private final AiCacheRepository aiCacheRepository;
     private final AiJobQueueService aiJobQueueService;
@@ -60,7 +63,7 @@ public class AiIntegrationService {
         String normalizedProblemText = normalizeProblemText(problemText);
         String analysisJson = resolveAnalysisJson(normalizedProblemText);
 
-        String geminiKey = "gemini_artifacts_v3_no_generator_" + generateHash(normalizedProblemText + "|" + analysisJson + "|count=" + count);
+        String geminiKey = GEMINI_CACHE_PREFIX + generateHash(normalizedProblemText + "|" + analysisJson + "|count=" + count);
         Optional<AiResponseDTO> cachedGeminiDto = readCache(geminiKey, AiResponseDTO.class, "gemini-artifacts");
         AiResponseDTO dto;
         if (!bypassCache && cachedGeminiDto.isPresent()) {
@@ -103,10 +106,10 @@ public class AiIntegrationService {
 
         String problemText = resolveProblemTextForCacheEviction(problemDescription, base64Images, sourceFingerprint);
         String normalizedProblemText = normalizeProblemText(problemText);
-        String analysisKey = "ollama_analysis_v2_" + generateHash(normalizedProblemText);
+        String analysisKey = ANALYSIS_CACHE_PREFIX + generateHash(normalizedProblemText);
         Optional<String> cachedAnalysis = readCache(analysisKey, String.class, "ollama-analysis-evict-lookup");
         if (cachedAnalysis.isPresent()) {
-            String geminiKey = "gemini_artifacts_v3_no_generator_" + generateHash(
+            String geminiKey = GEMINI_CACHE_PREFIX + generateHash(
                     normalizedProblemText + "|" + cachedAnalysis.get() + "|count=" + count);
             evictCache(geminiKey, "gemini-artifacts");
         }
@@ -159,7 +162,7 @@ public class AiIntegrationService {
     }
 
     private String resolveAnalysisJson(String normalizedProblemText) {
-        String analysisKey = "ollama_analysis_v2_" + generateHash(normalizedProblemText);
+        String analysisKey = ANALYSIS_CACHE_PREFIX + generateHash(normalizedProblemText);
         Optional<String> cachedAnalysis = readCache(analysisKey, String.class, "ollama-analysis");
         if (cachedAnalysis.isPresent()) {
             return cachedAnalysis.get();
@@ -314,7 +317,6 @@ public class AiIntegrationService {
     }
 
     private String pipelineCacheKey(String sourceFingerprint, int count) {
-        return "ollama_gemini_ollama_generator_pipeline_v5_"
-                + generateHash(sourceFingerprint + "|count=" + count);
+        return PIPELINE_CACHE_PREFIX + generateHash(sourceFingerprint + "|count=" + count);
     }
 }

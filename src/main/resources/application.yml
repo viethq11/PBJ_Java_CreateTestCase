@@ -36,6 +36,7 @@ async:
   queue-capacity: 50
 
 ai:
+  debug-dir: ${AI_DEBUG_DIR:/app/ai-debug}
   queue:
     max-concurrency: ${AI_QUEUE_MAX_CONCURRENCY:1}
   gemini:

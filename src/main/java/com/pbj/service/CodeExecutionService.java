@@ -193,11 +193,29 @@ public class CodeExecutionService {
     // PUBLIC: Run generator script
     // ==================================================================
 
+    public String runGenerator(String generatorCode, String generatorLanguage, int seed, String size) {
+        GeneratorResult result = runGeneratorDetailed(generatorCode, generatorLanguage, seed, size);
+        return result.success ? result.output : null;
+    }
+
+    public static class GeneratorResult {
+        public final boolean success;
+        public final String output;
+        public final String message;
+
+        public GeneratorResult(boolean success, String output, String message) {
+            this.success = success;
+            this.output = output;
+            this.message = message;
+        }
+    }
+
     /**
      * Compile and run a generator script with given seed and size.
-     * Generator must accept: --seed <int> --size <small|medium|large|stress>
+     * C++/Java generators accept positional args: <seed> <small|medium|large|stress>.
+     * Python generators keep the legacy args: --seed <seed> --size <level>.
      */
-    public String runGenerator(String generatorCode, String generatorLanguage, int seed, String size) {
+    public GeneratorResult runGeneratorDetailed(String generatorCode, String generatorLanguage, int seed, String size) {
         String dirName = "gen_" + UUID.randomUUID();
         Path   dirPath = Paths.get("/tmp", dirName);
         try {
@@ -210,7 +228,7 @@ public class CodeExecutionService {
             CompileResult cr = compileProgram(langInfo, dirFile, fileName);
             if (!cr.success) {
                 System.err.println("DEBUG: Generator compilation failed: " + cr.message);
-                return null;
+                return new GeneratorResult(false, null, "Generator compilation failed:\n" + cr.message);
             }
 
             ProcessBuilder pb = buildGeneratorCommand(langInfo, dirFile, fileName, seed, size);
@@ -220,12 +238,15 @@ public class CodeExecutionService {
             if (!finished) {
                 killProcessGroup(process);
                 System.err.println("DEBUG: Generator timed out (seed=" + seed + ", size=" + size + ")");
-                return null;
+                return new GeneratorResult(false, null,
+                        "Generator timed out for seed=" + seed + " size=" + size);
             }
 
             if (process.exitValue() != 0) {
-                System.err.println("DEBUG: Generator exited with error: " + readStream(process.getErrorStream()));
-                return null;
+                String error = readStream(process.getErrorStream());
+                System.err.println("DEBUG: Generator exited with error: " + error);
+                return new GeneratorResult(false, null,
+                        "Generator exited with error for seed=" + seed + " size=" + size + ":\n" + error);
             }
 
             try (BufferedReader reader = new BufferedReader(
@@ -233,12 +254,17 @@ public class CodeExecutionService {
                 StringBuilder sb = new StringBuilder();
                 String line;
                 while ((line = reader.readLine()) != null) sb.append(line).append("\n");
-                return sb.toString().trim();
+                String output = sb.toString().trim();
+                if (output.isBlank()) {
+                    return new GeneratorResult(false, null,
+                            "Generator produced empty output for seed=" + seed + " size=" + size);
+                }
+                return new GeneratorResult(true, output, "OK");
             }
 
         } catch (Exception e) {
             System.err.println("DEBUG: Generator run failed: " + e.getMessage());
-            return null;
+            return new GeneratorResult(false, null, "Generator run failed: " + e.getMessage());
         } finally {
             deleteDir(dirPath.toFile());
         }

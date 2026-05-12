@@ -7,16 +7,21 @@ import com.pbj.entity.TestCase;
 import com.pbj.repository.ProblemRepository;
 import com.pbj.repository.TestCaseRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
@@ -29,7 +34,11 @@ public class ProblemService {
     private final CodeExecutionService codeExecutionService;
     private final JobQueueService jobQueueService;
     private final TestCaseStorageService testCaseStorageService;
+    private final FallbackGeneratorFactory fallbackGeneratorFactory;
     private final ObjectMapper objectMapper;
+
+    @Value("${ai.debug-dir:/app/ai-debug}")
+    private String aiDebugDir;
 
     // ======================================================================
     // Test-case batch sizes to run through the generator
@@ -309,14 +318,17 @@ public class ProblemService {
                 int seed    = Integer.parseInt(run[1]);
 
                 System.out.println("DEBUG: Running generator seed=" + seed + " size=" + size);
-                String generatedInput = codeExecutionService.runGenerator(
+                CodeExecutionService.GeneratorResult generatorResult = codeExecutionService.runGeneratorDetailed(
                         generatorCode, generatorLanguage, seed, size);
 
-                if (generatedInput == null || generatedInput.isBlank()) {
-                    System.err.println("DEBUG: Generator produced no output for seed=" + seed + " size=" + size);
+                if (!generatorResult.success) {
+                    System.err.println("DEBUG: Generator failed for seed=" + seed
+                            + " size=" + size + ": " + generatorResult.message);
                     rejectedGeneratedCount.incrementAndGet();
                     continue;
                 }
+
+                String generatedInput = generatorResult.output;
 
                 CodeExecutionService.ValidatorResult validatorResult =
                         codeExecutionService.runValidatorDetailed(dto.getValidatorCode(), generatedInput);
@@ -368,45 +380,80 @@ public class ProblemService {
         String[] probeSizes = {"small", "medium", "large", "stress"};
         int repairs = 0;
         String lastError = "";
+        logGeneratorDebug("initial", generatorCode);
 
         while (repairs <= 3) {
-            boolean allValid = true;
-            for (int i = 0; i < probeSizes.length; i++) {
-                int seed = 101 + i;
-                String size = probeSizes[i];
-                String generatedInput = codeExecutionService.runGenerator(generatorCode, language, seed, size);
-
-                if (generatedInput == null || generatedInput.isBlank()) {
-                    allValid = false;
-                    lastError = "Generator produced no output or timed out for seed=" + seed + " size=" + size;
-                    break;
-                }
-
-                CodeExecutionService.ValidatorResult validation =
-                        codeExecutionService.runValidatorDetailed(dto.getValidatorCode(), generatedInput);
-                if (!validation.valid) {
-                    allValid = false;
-                    lastError = validation.message + "\nGenerated input:\n" + generatedInput;
-                    break;
-                }
-            }
-
-            if (allValid) {
+            ProbeResult probe = probeGenerator(dto, generatorCode, language, probeSizes);
+            if (probe.valid) {
                 dto.setGeneratorCode(generatorCode);
                 dto.setGeneratorLanguage(language);
                 return generatorCode;
             }
 
+            lastError = probe.message;
             if (repairs == 3) break;
             repairs++;
             System.err.println("WARN: Generator failed probe validation. Repair attempt " + repairs + "/3: " + lastError);
             generatorCode = aiIntegrationService.repairGenerator(dto, generatorCode, lastError);
+            logGeneratorDebug("repair_" + repairs, generatorCode);
             language = "cpp";
             dto.setGeneratorLanguage("cpp");
         }
 
+        System.err.println("WARN: AI generator repair failed. Trying backend fallback generator candidates.");
+        List<String> fallbackCandidates = fallbackGeneratorFactory.createCandidates(dto);
+        for (int i = 0; i < fallbackCandidates.size(); i++) {
+            String candidate = fallbackCandidates.get(i);
+            logGeneratorDebug("fallback_" + (i + 1), candidate);
+            ProbeResult probe = probeGenerator(dto, candidate, "cpp", probeSizes);
+            if (probe.valid) {
+                System.out.println("INFO: Fallback generator candidate " + (i + 1) + " passed validator probes.");
+                dto.setGeneratorCode(candidate);
+                dto.setGeneratorLanguage("cpp");
+                return candidate;
+            }
+            System.err.println("WARN: Fallback generator candidate " + (i + 1) + " rejected: " + probe.message);
+            lastError = probe.message;
+        }
+
         throw new IllegalStateException(
-                "Generated testcase artifact is invalid after generator repair attempts. Last error: " + lastError);
+                "Generated testcase artifact is invalid after generator repair and fallback attempts. Last error: " + lastError);
+    }
+
+    private ProbeResult probeGenerator(AiResponseDTO dto, String generatorCode, String language, String[] probeSizes) {
+        for (int i = 0; i < probeSizes.length; i++) {
+            int seed = 101 + i;
+            String size = probeSizes[i];
+            CodeExecutionService.GeneratorResult generatorResult =
+                    codeExecutionService.runGeneratorDetailed(generatorCode, language, seed, size);
+
+            if (!generatorResult.success) {
+                return new ProbeResult(false, generatorResult.message);
+            }
+
+            String generatedInput = generatorResult.output;
+            CodeExecutionService.ValidatorResult validation =
+                    codeExecutionService.runValidatorDetailed(dto.getValidatorCode(), generatedInput);
+            if (!validation.valid) {
+                return new ProbeResult(false, validation.message + "\nGenerated input:\n" + generatedInput);
+            }
+        }
+        return new ProbeResult(true, "OK");
+    }
+
+    private record ProbeResult(boolean valid, String message) {}
+
+    private void logGeneratorDebug(String label, String code) {
+        try {
+            Path dir = Paths.get(aiDebugDir);
+            Files.createDirectories(dir);
+            String safeLabel = label == null ? "generator" : label.replaceAll("[^a-zA-Z0-9_-]", "_");
+            Path file = dir.resolve("generator_" + safeLabel + "_" + UUID.randomUUID() + ".cpp");
+            Files.writeString(file, code == null ? "" : code);
+            System.out.println("INFO: Generator debug code saved: " + file.toAbsolutePath());
+        } catch (Exception e) {
+            System.err.println("WARN: Failed to write generator debug file: " + e.getMessage());
+        }
     }
 
     private int saveEdgeCases(Problem problem, List<AiResponseDTO.TestCaseDTO> edgeCases, String goldenCode) {

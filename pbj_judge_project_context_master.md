@@ -40,7 +40,7 @@ Nhưng được mở rộng bằng AI pipeline.
 
 ## AI
 - Google Gemini
-- OpenAI ChatGPT (GPT-4o)
+- Ollama local
 - LangChain4j
 
 ## Infrastructure
@@ -85,7 +85,7 @@ ProblemService
   ↓
 AI Integration Service
   ↓
-Gemini / OpenAI
+Ollama local / Gemini
   ↓
 AI Response JSON
   ↓
@@ -154,7 +154,21 @@ User nhập:
 
 ## Stage 2 — AI Analysis
 
-Gemini phân tích:
+Ollama local phân tích ngắn:
+
+```json
+{
+  "problem_type": "...",
+  "input_format": "...",
+  "output_format": "...",
+  "constraints": "...",
+  "algorithm_type": "...",
+  "intended_complexity": "...",
+  "slow_wrong_approaches": []
+}
+```
+
+Gemini nhận đề gốc + analysis_json và sinh:
 
 AI trả về:
 
@@ -304,22 +318,25 @@ Frontend polling để lấy trạng thái job.
 ## AiIntegrationService
 
 Responsibilities:
-- connect Gemini
-- connect Groq
-- parse AI JSON
-- retry logic
-- validation
+- orchestrate OllamaAnalysisService and GeminiTestGenerationService
+- cache pipeline result
+- expose code-generation helpers
 
 AI Roles:
 
-### Gemini
-- problem understanding
-- structured reasoning
-- code generation
+### Ollama local
+- short problem analysis
+- input/output extraction
+- constraint extraction
+- algorithm classification
+- likely slow wrong approaches
 
-### Groq
-- high-speed testcase generation
-- Llama inference
+### Gemini
+- receives original problem + analysis_json
+- generates test_plan
+- generates generator_code
+- generates golden_solution
+- generates validator_code
 
 ---
 
@@ -445,7 +462,8 @@ docker-compose down -v
 
 ```env
 GEMINI_API_KEY=...
-OPENAI_API_KEY=...
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b
 ```
 
 `.env` nằm trong `.gitignore`.
@@ -652,7 +670,7 @@ Key extracted facts:
 - Spring Boot 3.2
 - Java 21
 - MySQL master/slave
-- Gemini + OpenAI
+- Ollama local + Gemini
 - Docker deployment
 - AI-generated generator architecture
 - sandbox execution

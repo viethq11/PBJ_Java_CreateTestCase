@@ -245,6 +245,63 @@ public class CodeExecutionService {
     }
 
     // ==================================================================
+    // PUBLIC: Run generated validator against one input
+    // ==================================================================
+
+    public boolean runValidator(String validatorCode, String input) {
+        if (validatorCode == null || validatorCode.isBlank()) return true;
+
+        String dirName = "validator_" + UUID.randomUUID();
+        Path dirPath = Paths.get("/tmp", dirName);
+        try {
+            Files.createDirectories(dirPath);
+            File dirFile = dirPath.toFile();
+            File validatorFile = new File(dirFile, "validator.py");
+            Files.writeString(validatorFile.toPath(), validatorCode);
+            String pythonCmd = isCommandAvailable("python3") ? "python3" : "python";
+
+            ProcessBuilder compile = new ProcessBuilder(pythonCmd, "-m", "py_compile", "validator.py");
+            compile.directory(dirFile);
+            Process compileProcess = compile.start();
+            boolean compiled = compileProcess.waitFor(10, TimeUnit.SECONDS);
+            if (!compiled) {
+                compileProcess.destroyForcibly();
+                System.err.println("DEBUG: Validator compilation timed out.");
+                return false;
+            }
+            if (compileProcess.exitValue() != 0) {
+                System.err.println("DEBUG: Validator compilation failed: " + readProcessOutput(compileProcess));
+                return false;
+            }
+
+            ProcessBuilder run = new ProcessBuilder(pythonCmd, "validator.py");
+            run.directory(dirFile);
+            Process process = run.start();
+            try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()))) {
+                if (input != null) writer.write(input);
+            }
+
+            boolean finished = process.waitFor(10, TimeUnit.SECONDS);
+            if (!finished) {
+                killProcessGroup(process);
+                System.err.println("DEBUG: Validator timed out.");
+                return false;
+            }
+
+            if (process.exitValue() != 0) {
+                System.err.println("DEBUG: Validator rejected input: " + readStream(process.getErrorStream()));
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            System.err.println("DEBUG: Validator run failed: " + e.getMessage());
+            return false;
+        } finally {
+            deleteDir(dirPath.toFile());
+        }
+    }
+
+    // ==================================================================
     // PRIVATE: Language definitions
     // ==================================================================
 

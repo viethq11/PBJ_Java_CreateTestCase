@@ -19,7 +19,7 @@ public class AiCache {
     @Column(name = "request_hash", unique = true, nullable = false)
     private String requestHash;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(columnDefinition = "LONGTEXT")
     private String response;
 
     private LocalDateTime createdAt;

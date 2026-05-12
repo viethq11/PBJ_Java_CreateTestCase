@@ -10,7 +10,7 @@ Dưới đây là tài liệu tổng hợp về cách hệ thống hoạt độn
 - **Backend:** Java 21, Spring Boot 3.2.4 (Spring Web, Spring Data JPA, Spring AOP).
 - **Frontend:** HTML5, Tailwind CSS (qua CDN), Thymeleaf (Server-side rendering).
 - **Database:** MySQL 8.0 (thiết lập Master-Slave).
-- **AI Integration:** Kết nối với API của Google Gemini và OpenAI ChatGPT.
+- **AI Integration:** Ollama local phân tích đề ngắn, sau đó Google Gemini sinh test plan, generator, golden solution và validator.
 - **Infrastructure:** Docker & Docker Compose để container hóa và quản lý các service.
 
 ---
@@ -31,8 +31,8 @@ Hệ thống sử dụng cơ chế **Cân bằng tải cơ sở dữ liệu** th
 Đây là tính năng cốt lõi của hệ thống.
 1. **Input từ người dùng:** Tại giao diện trang chủ, người dùng nhập "Tiêu đề bài toán", "Mô tả", và có thể đính kèm **Ảnh minh họa**.
 2. **Gửi Request:** `ProblemController` tiếp nhận request và chuyển cho `ProblemService`.
-3. **Gọi AI Model:** Spring Boot sử dụng `LangChain4j` để gửi dữ liệu (text + ảnh) lên API của **Google Gemini** (`gemini-pro`).
-4. **Phân tích và Sinh dữ liệu:** AI phân tích yêu cầu và trả về một cấu trúc dữ liệu JSON chứa:
+3. **Gọi AI Model:** Spring Boot gọi **Ollama local** để sinh `analysis_json` ngắn, rồi gửi đề gốc + `analysis_json` lên **Google Gemini**.
+4. **Phân tích và Sinh dữ liệu:** Gemini trả về một cấu trúc dữ liệu JSON chứa:
    - Tên bài toán, nội dung mô tả chi tiết.
    - Giới hạn thời gian (Time Limit), Giới hạn bộ nhớ (Memory Limit).
    - Mã nguồn chuẩn (Golden Solution - thường là C++ hoặc Java).

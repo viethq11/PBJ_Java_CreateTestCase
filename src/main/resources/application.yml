@@ -36,13 +36,15 @@ async:
   queue-capacity: 50
 
 ai:
+  queue:
+    max-concurrency: ${AI_QUEUE_MAX_CONCURRENCY:1}
   gemini:
-    api-key: ${GEMINI_API_KEY}
-    model: gemini-2.0-flash
-    pro-model: gemini-2.5-flash
+    api-key: ${GEMINI_API_KEY:}
+    api-keys: ${GEMINI_API_KEYS:}
+    model: ${GEMINI_MODEL:gemini-2.5-flash}
+    pro-model: ${GEMINI_PRO_MODEL:${GEMINI_MODEL:gemini-2.5-flash}}
     timeout-seconds: 120
-  openai:
-    base-url: https://api.openai.com/v1
-    api-key: ${OPENAI_API_KEY}
-    model: gpt-4o
-    timeout-seconds: 120
+  ollama:
+    base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+    model: ${OLLAMA_MODEL:llama3.1:8b}
+    timeout-seconds: 90

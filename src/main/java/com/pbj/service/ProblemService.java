@@ -219,22 +219,31 @@ public class ProblemService {
     @Transactional
     public Problem generateAndSaveProblem(String title, String description, List<MultipartFile> images) {
         List<String> base64Images = encodeImages(images);
+        Problem p = null;
 
-        AiResponseDTO dto = aiIntegrationService.generateTestCases(description, base64Images, GENERATOR_RUNS.length);
+        try {
+            AiResponseDTO dto = aiIntegrationService.generateTestCases(description, base64Images, GENERATOR_RUNS.length);
 
-        Problem p = buildProblem(title, description, dto);
-        p = problemRepository.save(p);
+            p = buildProblem(title, description, dto);
+            p = problemRepository.save(p);
 
-        String goldenCode = resolveGoldenSolution(p, dto);
+            String goldenCode = resolveGoldenSolution(p, dto);
 
-        if (goldenCode != null && !goldenCode.isBlank()) {
-            int savedCount = generateTestCasesFromCode(p, dto, goldenCode);
-            verifyGenerationResult(p, savedCount, p.getId(), goldenCode);
-        } else {
-            saveEdgeCases(p, dto.getEdgeCases(), goldenCode);
+            if (goldenCode != null && !goldenCode.isBlank()) {
+                int savedCount = generateTestCasesFromCode(p, dto, goldenCode);
+                verifyGenerationResult(p, savedCount, p.getId(), goldenCode);
+            } else {
+                saveEdgeCases(p, dto.getEdgeCases(), goldenCode);
+            }
+
+            return p;
+        } catch (RuntimeException e) {
+            aiIntegrationService.evictTestGenerationCache(description, base64Images, GENERATOR_RUNS.length);
+            if (p != null && p.getId() != null) {
+                testCaseStorageService.deleteAllForProblem(p.getId());
+            }
+            throw e;
         }
-
-        return p;
     }
 
     @Transactional
@@ -251,7 +260,7 @@ public class ProblemService {
         testCaseStorageService.deleteAllForProblem(problemId);
 
         AiResponseDTO dto = aiIntegrationService.generateTestCases(
-                problem.getDescription(), new ArrayList<>(), GENERATOR_RUNS.length, true);
+                problem.getDescription(), new ArrayList<>(), GENERATOR_RUNS.length, false);
 
         if (dto.getConstraints() != null && !dto.getConstraints().isBlank()) {
             updateProblemMetadata(problem, dto);
@@ -263,8 +272,14 @@ public class ProblemService {
                     "Cannot regenerate testcases: failed to obtain a valid AC reference solution.");
         }
 
-        int savedCount = generateTestCasesFromCode(problem, dto, goldenCode);
-        verifyGenerationResult(problem, savedCount, problemId, goldenCode);
+        try {
+            int savedCount = generateTestCasesFromCode(problem, dto, goldenCode);
+            verifyGenerationResult(problem, savedCount, problemId, goldenCode);
+        } catch (RuntimeException e) {
+            aiIntegrationService.evictTestGenerationCache(problem.getDescription(), new ArrayList<>(), GENERATOR_RUNS.length);
+            testCaseStorageService.deleteAllForProblem(problemId);
+            throw e;
+        }
     }
 
     // ======================================================================
@@ -277,12 +292,14 @@ public class ProblemService {
 
         Set<String> fingerprints = new HashSet<>();
         AtomicInteger savedCount = new AtomicInteger(0);
+        AtomicInteger generatedCount = new AtomicInteger(0);
+        AtomicInteger rejectedGeneratedCount = new AtomicInteger(0);
 
         // 1. Manually crafted edge cases first
         savedCount.addAndGet(saveEdgeCases(problem, dto.getEdgeCases(), goldenCode));
 
         // 2. Generator-based cases
-        if (generatorCode != null && !generatorCode.isBlank()) {
+            if (generatorCode != null && !generatorCode.isBlank()) {
             int tcSeq = savedCount.get() + 1;
             for (String[] run : GENERATOR_RUNS) {
                 String size = run[0];
@@ -294,6 +311,13 @@ public class ProblemService {
 
                 if (generatedInput == null || generatedInput.isBlank()) {
                     System.err.println("DEBUG: Generator produced no output for seed=" + seed + " size=" + size);
+                    rejectedGeneratedCount.incrementAndGet();
+                    continue;
+                }
+
+                if (!codeExecutionService.runValidator(dto.getValidatorCode(), generatedInput)) {
+                    System.err.println("DEBUG: Validator rejected generated input for seed=" + seed + " size=" + size);
+                    rejectedGeneratedCount.incrementAndGet();
                     continue;
                 }
 
@@ -302,16 +326,29 @@ public class ProblemService {
 
                 if (expectedOutput == null || expectedOutput.isBlank()) {
                     System.err.println("DEBUG: Golden solution failed for seed=" + seed);
+                    rejectedGeneratedCount.incrementAndGet();
                     continue;
                 }
 
-                if (!isUniqueTestCase(generatedInput, expectedOutput, fingerprints)) continue;
+                if (!isUniqueTestCase(generatedInput, expectedOutput, fingerprints)) {
+                    rejectedGeneratedCount.incrementAndGet();
+                    continue;
+                }
 
                 boolean isSample = size.equals("small") && seed == 1;
                 testCaseStorageService.saveTestCase(problem, generatedInput, expectedOutput, isSample, tcSeq++);
                 savedCount.incrementAndGet();
+                generatedCount.incrementAndGet();
                 System.out.println("DEBUG: Saved testcase (seed=" + seed + ", size=" + size + ")");
             }
+        }
+
+        if (generatorCode != null && !generatorCode.isBlank() && generatedCount.get() < 8) {
+            throw new IllegalStateException(
+                    "Generated testcase artifact is invalid: only " + generatedCount.get()
+                    + " generator-based cases were accepted, "
+                    + rejectedGeneratedCount.get() + " were rejected or timed out. "
+                    + "The cached Gemini generator/validator has been evicted; please try again.");
         }
 
         return savedCount.get();
@@ -324,6 +361,11 @@ public class ProblemService {
         for (AiResponseDTO.TestCaseDTO ec : edgeCases) {
             String input = ec.getInput();
             if (input == null || input.isBlank()) continue;
+
+            if (!codeExecutionService.runValidator(problem.getValidatorCode(), input)) {
+                System.err.println("DEBUG: Validator rejected manual edge case.");
+                continue;
+            }
 
             String expectedOutput;
             if (goldenCode != null && !goldenCode.isBlank()) {

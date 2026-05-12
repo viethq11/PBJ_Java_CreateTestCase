@@ -52,7 +52,7 @@ footer{text-align:center;padding:30px;color:#475569;border-top:1px solid #1e293b
     <span class="badge">🍃 Spring Boot 3.2</span>
     <span class="badge">🐬 MySQL 8.0</span>
     <span class="badge">🐳 Docker</span>
-    <span class="badge">🤖 Gemini 2.0 + OpenAI</span>
+    <span class="badge">🤖 Ollama Local + Gemini</span>
   </div>
 </div>
 
@@ -76,7 +76,7 @@ footer{text-align:center;padding:30px;color:#475569;border-top:1px solid #1e293b
     <div class="grid">
       <div class="card">
         <h4>🤖 AI Pipeline</h4>
-        <p>Sử dụng <strong>Gemini 2.0 Flash</strong> để đọc ảnh đề bài và <strong>OpenAI GPT-4o</strong> để phân tích, sinh generator và golden solution.</p>
+        <p>Sử dụng <strong>Ollama local</strong> để phân tích đề ngắn và <strong>Gemini 2.5 Flash</strong> để sinh test plan, generator, golden solution và validator.</p>
       </div>
       <div class="card">
         <h4>🛡️ Sandbox Bảo mật</h4>
@@ -133,13 +133,13 @@ docker-compose --version</code></pre>
 
     <div class="step">
       <div class="step-num">2</div>
-      <h4>OpenAI API Key</h4>
-      <p style="color:#94a3b8;margin-bottom:8px">Dùng để phân tích đề bài, sinh test plan, generator và golden solution qua mô hình GPT-4o.</p>
+      <h4>Ollama Local</h4>
+      <p style="color:#94a3b8;margin-bottom:8px">Dùng để phân tích nhanh đề bài trên máy local trước khi Gemini sinh artifact kiểm thử.</p>
       <ol style="padding-left:20px;color:#94a3b8;font-size:.9rem;line-height:2">
-        <li>Truy cập <a href="https://platform.openai.com/api-keys" style="color:#60a5fa">platform.openai.com/api-keys</a></li>
-        <li>Đăng nhập tài khoản OpenAI</li>
-        <li>Nhấn <strong>"Create new secret key"</strong></li>
-        <li>Copy key và lưu vào file <code>.env</code></li>
+        <li>Cài Ollama từ <a href="https://ollama.com" style="color:#60a5fa">ollama.com</a></li>
+        <li>Chạy <code>ollama pull llama3.1:8b</code></li>
+        <li>Đảm bảo Ollama đang lắng nghe tại <code>http://localhost:11434</code></li>
+        <li>Cấu hình model trong file <code>.env</code> nếu muốn đổi model.</li>
       </ol>
     </div>
 
@@ -147,7 +147,8 @@ docker-compose --version</code></pre>
       <div class="step-num">3</div>
       <h4>Tạo file <code>.env</code> tại thư mục gốc dự án</h4>
       <pre><code>GEMINI_API_KEY=AIzaSy...your_key_here
-OPENAI_API_KEY=sk-...your_key_here</code></pre>
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b</code></pre>
       <div class="alert alert-warn" style="margin-top:10px">
         <span class="icon">🔒</span>
         <div>File <code>.env</code> đã được thêm vào <code>.gitignore</code>. <strong>Không commit file này lên Git.</strong></div>
@@ -170,7 +171,8 @@ cd pbj-judge</code></pre>
       <div class="step-num">2</div>
       <h4>Tạo file <code>.env</code> với API keys (xem mục trên)</h4>
       <pre><code>GEMINI_API_KEY=your_gemini_api_key
-OPENAI_API_KEY=your_openai_api_key</code></pre>
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b</code></pre>
     </div>
 
     <div class="step">
@@ -266,7 +268,9 @@ mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pr
 │       │   ├── entity/          # Problem, TestCase entities
 │       │   ├── repository/      # JPA Repositories
 │       │   └── service/
-│       │       ├── AiIntegrationService.java    # Gemini + OpenAI AI pipeline
+│       │       ├── AiIntegrationService.java    # Điều phối Ollama + Gemini
+│       │       ├── OllamaAnalysisService.java   # Phân tích đề ngắn bằng Ollama local
+│       │       ├── GeminiTestGenerationService.java # Sinh test plan/generator/golden/validator
 │       │       ├── CodeExecutionService.java    # Sandbox thực thi code
 │       │       ├── JobQueueService.java         # Quản lý async jobs
 │       │       ├── ProblemService.java          # Logic nghiệp vụ chính
@@ -289,9 +293,9 @@ mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pr
     <div class="card" style="margin-top:10px">
       <p style="color:#94a3b8;font-size:.9rem;line-height:2">
         <span class="tag">Bước 1</span> Người dùng nhập đề bài (text + ảnh)<br>
-        <span class="tag">Bước 2</span> <strong>Gemini 2.5 Flash</strong> phân tích → sinh JSON (mô tả, format I/O, constraints, generator code, golden solution)<br>
-        <span class="tag">Bước 3</span> Generator script chạy trong sandbox → sinh input data với nhiều seed<br>
-        <span class="tag">Bước 4</span> Golden solution (C++) chạy trên mỗi input → sinh expected output<br>
+        <span class="tag">Bước 2</span> <strong>Ollama local</strong> phân tích → sinh <code>analysis_json</code> ngắn<br>
+        <span class="tag">Bước 3</span> <strong>Gemini 2.5 Flash</strong> nhận đề gốc + analysis_json → sinh test plan, generator, golden solution, validator<br>
+        <span class="tag">Bước 4</span> Backend chạy validator, generator và golden solution trong sandbox<br>
         <span class="tag">Bước 5</span> File <code>.in</code>/<code>.out</code> lưu vào <code>testcase_data/problem_X/</code><br>
         <span class="tag">Bước 6</span> Kiểm tra verdict separation: AC solution pass, WA probe fail, TLE probe timeout
       </p>
@@ -312,7 +316,7 @@ mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pr
     <div class="step">
       <div class="step-num">!</div>
       <h4>Lỗi <code>401 Unauthorized</code> từ AI</h4>
-      <p style="color:#94a3b8;font-size:.9rem">API key không hợp lệ hoặc hết quota. Kiểm tra file <code>.env</code> và thử key mới tại Google AI Studio / OpenAI Platform.</p>
+      <p style="color:#94a3b8;font-size:.9rem">API key không hợp lệ, hết quota, hoặc Ollama chưa chạy. Kiểm tra <code>GEMINI_API_KEY</code>, <code>OLLAMA_BASE_URL</code> và service Ollama local.</p>
     </div>
 
     <div class="step">
@@ -351,7 +355,7 @@ ports:
 </div>
 
 <footer>
-  PBJ Judge — Hệ thống chấm bài tự động tích hợp AI &nbsp;|&nbsp; Spring Boot 3.2 · MySQL 8 · Docker · Gemini · OpenAI
+  PBJ Judge — Hệ thống chấm bài tự động tích hợp AI &nbsp;|&nbsp; Spring Boot 3.2 · MySQL 8 · Docker · Ollama · Gemini
 </footer>
 
 </body>

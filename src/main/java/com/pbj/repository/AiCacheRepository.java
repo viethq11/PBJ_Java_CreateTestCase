@@ -9,4 +9,6 @@ import java.util.Optional;
 @Repository
 public interface AiCacheRepository extends JpaRepository<AiCache, Long> {
     Optional<AiCache> findByRequestHash(String requestHash);
+
+    void deleteByRequestHash(String requestHash);
 }

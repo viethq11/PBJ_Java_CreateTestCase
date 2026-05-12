@@ -1,0 +1,17 @@
+target/
+build/
+.gradle/
+.idea/
+.vscode/
+*.iml
+*.log
+node_modules/
+dist/
+out/
+*.zip
+*.rar
+*.7z
+*.exe
+*.jar
+*.class
+.env

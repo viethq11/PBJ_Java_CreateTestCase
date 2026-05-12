@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="vi" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tạo Test Case - Hệ thống tạo test case tích hợp AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #ffffff; color: #334155; }
+        #progressOverlay { display: none; }
+        #progressOverlay.active { display: flex; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+    <!-- Navbar -->
+    <nav class="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center gap-2">
+                    <svg class="w-8 h-8 text-blue-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    <a href="/" class="text-xl font-bold text-slate-800 tracking-tight">Hệ thống tạo test case tích hợp AI</a>
+                </div>
+                <div class="flex items-center">
+                    <a href="/" class="text-sm font-medium text-slate-500 hover:text-slate-800 transition">Quay lại</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Progress Overlay (shown while job is running) -->
+    <div id="progressOverlay" class="fixed inset-0 z-50 items-center justify-center bg-white/80 backdrop-blur-sm">
+        <div class="text-center max-w-sm mx-auto p-8 bg-white rounded-2xl shadow-xl border border-slate-200">
+            <svg class="animate-spin mx-auto h-12 w-12 text-blue-600 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <h3 class="text-lg font-bold text-slate-800 mb-2">AI đang phân tích &amp; tạo đề...</h3>
+            <p id="progressStatus" class="text-sm text-slate-500 mb-1">Đang gửi yêu cầu...</p>
+            <p class="text-xs text-slate-400">Quá trình này có thể mất 30–90 giây. Vui lòng đừng đóng tab.</p>
+        </div>
+    </div>
+
+    <div class="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="bg-white rounded-lg shadow-md border border-slate-200">
+            <div class="px-6 py-5 border-b border-slate-200 bg-slate-50/50 rounded-t-lg">
+                <h2 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                    <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    Tạo Bài Tập &amp; Test Case Mới
+                </h2>
+            </div>
+
+            <div class="p-6">
+                <!-- Error banner -->
+                <div id="errorBanner" class="hidden bg-red-50 border-l-4 border-red-500 p-4 mb-5 rounded-r-md">
+                    <p class="text-sm font-medium text-red-800" id="errorText"></p>
+                </div>
+
+                <form id="generateForm" enctype="multipart/form-data">
+                    <!-- Title -->
+                    <div class="mb-5">
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Tiêu đề bài toán <span class="text-red-500">*</span></label>
+                        <input type="text" name="title" id="titleInput" required placeholder="Ví dụ: Dãy con tăng dài nhất"
+                            class="w-full bg-white border border-slate-300 text-slate-900 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow">
+                    </div>
+
+                    <!-- Image Upload -->
+                    <div class="mb-5">
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Ảnh minh hoạ (Tuỳ chọn)</label>
+                        <div class="relative group mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-slate-300 border-dashed rounded-md hover:border-blue-400 bg-slate-50 transition-colors cursor-pointer">
+                            <input type="file" name="images" id="imageInput" multiple accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
+                            <div class="space-y-1 text-center">
+                                <svg class="mx-auto h-12 w-12 text-slate-400 group-hover:text-blue-500 transition-colors" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                                <div class="text-sm text-slate-600">
+                                    <span class="text-blue-600 font-medium">Tải ảnh lên</span> hoặc kéo thả vào đây
+                                </div>
+                            </div>
+                        </div>
+                        <div id="imagePreview" class="mt-4 grid grid-cols-4 gap-3"></div>
+                    </div>
+
+                    <!-- Text Description -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium text-slate-700 mb-2">Mô tả yêu cầu</label>
+                        <textarea name="description" rows="4" placeholder="Mô tả bài toán, hoặc để AI tự động phân tích từ ảnh..."
+                            class="w-full bg-white border border-slate-300 text-slate-900 rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow resize-y"></textarea>
+                    </div>
+
+                    <!-- Submit -->
+                    <button type="submit" id="submitBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-md transition-colors shadow-sm flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 text-lg">
+                        Phân Tích &amp; Tạo Đề
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ── Image preview ──────────────────────────────────────────────────────
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const previewArea = document.getElementById('imagePreview');
+            previewArea.innerHTML = '';
+            Array.from(e.target.files).forEach(file => {
+                const reader = new FileReader();
+                reader.onload = ev => {
+                    const container = document.createElement('div');
+                    container.className = 'relative group aspect-square rounded-md overflow-hidden border border-slate-200 shadow-sm';
+                    container.innerHTML = `
+                        <img src="${ev.target.result}" class="w-full h-full object-cover">
+                        <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <button type="button" class="text-xs bg-red-500 text-white px-3 py-1.5 rounded shadow-sm hover:bg-red-600" onclick="this.closest('.relative').remove()">Xóa</button>
+                        </div>`;
+                    previewArea.appendChild(container);
+                };
+                reader.readAsDataURL(file);
+            });
+        });
+
+        // ── Async form submit with polling ─────────────────────────────────────
+        document.getElementById('generateForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            showOverlay('Đang gửi yêu cầu đến AI...');
+
+            const formData = new FormData(this);
+            try {
+                // Step 1: Submit job
+                const resp = await fetch('/api/problem/generate', { method: 'POST', body: formData });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || 'Lỗi khi gửi yêu cầu.');
+
+                const jobId = data.jobId;
+                setStatus('AI đang phân tích bài toán và sinh test case...');
+
+                // Step 2: Poll until DONE / FAILED
+                await pollJob(jobId, status => setStatus(status));
+
+            } catch (err) {
+                hideOverlay();
+                showError(err.message);
+            }
+        });
+
+        async function pollJob(jobId, onStatus) {
+            return new Promise((resolve, reject) => {
+                const interval = setInterval(async () => {
+                    try {
+                        const r    = await fetch('/api/job/' + jobId);
+                        const data = await r.json();
+
+                        if (data.state === 'DONE') {
+                            clearInterval(interval);
+                            // result = problem ID for GENERATE jobs
+                            window.location.href = '/problem/' + data.result;
+                        } else if (data.state === 'FAILED') {
+                            clearInterval(interval);
+                            reject(new Error(data.error || 'Job thất bại.'));
+                        } else {
+                            onStatus('AI đang xử lý (' + data.state + ')...');
+                        }
+                    } catch (err) {
+                        clearInterval(interval);
+                        reject(err);
+                    }
+                }, 2500);
+            });
+        }
+
+        function showOverlay(msg) {
+            document.getElementById('progressStatus').textContent = msg;
+            document.getElementById('progressOverlay').classList.add('active');
+            document.getElementById('submitBtn').disabled = true;
+        }
+
+        function hideOverlay() {
+            document.getElementById('progressOverlay').classList.remove('active');
+            document.getElementById('submitBtn').disabled = false;
+        }
+
+        function setStatus(msg) {
+            document.getElementById('progressStatus').textContent = msg;
+        }
+
+        function showError(msg) {
+            const banner = document.getElementById('errorBanner');
+            document.getElementById('errorText').textContent = msg;
+            banner.classList.remove('hidden');
+            banner.scrollIntoView({ behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>

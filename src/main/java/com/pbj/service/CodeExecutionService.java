@@ -244,12 +244,28 @@ public class CodeExecutionService {
         }
     }
 
+    public static class ValidatorResult {
+        public final boolean valid;
+        public final String message;
+
+        public ValidatorResult(boolean valid, String message) {
+            this.valid = valid;
+            this.message = message;
+        }
+    }
+
     // ==================================================================
     // PUBLIC: Run generated validator against one input
     // ==================================================================
 
     public boolean runValidator(String validatorCode, String input) {
-        if (validatorCode == null || validatorCode.isBlank()) return true;
+        return runValidatorDetailed(validatorCode, input).valid;
+    }
+
+    public ValidatorResult runValidatorDetailed(String validatorCode, String input) {
+        if (validatorCode == null || validatorCode.isBlank()) {
+            return new ValidatorResult(true, "No validator configured.");
+        }
 
         String dirName = "validator_" + UUID.randomUUID();
         Path dirPath = Paths.get("/tmp", dirName);
@@ -267,11 +283,12 @@ public class CodeExecutionService {
             if (!compiled) {
                 compileProcess.destroyForcibly();
                 System.err.println("DEBUG: Validator compilation timed out.");
-                return false;
+                return new ValidatorResult(false, "Validator compilation timed out.");
             }
             if (compileProcess.exitValue() != 0) {
-                System.err.println("DEBUG: Validator compilation failed: " + readProcessOutput(compileProcess));
-                return false;
+                String message = readProcessOutput(compileProcess);
+                System.err.println("DEBUG: Validator compilation failed: " + message);
+                return new ValidatorResult(false, "Validator compilation failed: " + message);
             }
 
             ProcessBuilder run = new ProcessBuilder(pythonCmd, "validator.py");
@@ -285,17 +302,18 @@ public class CodeExecutionService {
             if (!finished) {
                 killProcessGroup(process);
                 System.err.println("DEBUG: Validator timed out.");
-                return false;
+                return new ValidatorResult(false, "Validator timed out.");
             }
 
             if (process.exitValue() != 0) {
-                System.err.println("DEBUG: Validator rejected input: " + readStream(process.getErrorStream()));
-                return false;
+                String message = readStream(process.getErrorStream());
+                System.err.println("DEBUG: Validator rejected input: " + message);
+                return new ValidatorResult(false, message.isBlank() ? "Validator rejected input." : message);
             }
-            return true;
+            return new ValidatorResult(true, "OK");
         } catch (Exception e) {
             System.err.println("DEBUG: Validator run failed: " + e.getMessage());
-            return false;
+            return new ValidatorResult(false, "Validator run failed: " + e.getMessage());
         } finally {
             deleteDir(dirPath.toFile());
         }
@@ -486,10 +504,10 @@ public class CodeExecutionService {
             String ulimit = String.format(
                     "ulimit -v %d -u %d 2>/dev/null; exec ", SANDBOX_MAX_VMEM_KB, SANDBOX_MAX_NPROC);
             String cmd = switch (langInfo) {
-                case CPP    -> ulimit + execPath + " --seed " + seed + " --size " + size;
+                case CPP    -> ulimit + execPath + " " + seed + " " + size;
                 case PYTHON -> ulimit + (isCommandAvailable("python3") ? "python3" : "python")
                                + " " + fileName + " --seed " + seed + " --size " + size;
-                case JAVA   -> ulimit + "java " + langInfo.runArg + " --seed " + seed + " --size " + size;
+                case JAVA   -> ulimit + "java " + langInfo.runArg + " " + seed + " " + size;
             };
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", cmd);
             pb.directory(dir);
@@ -500,12 +518,11 @@ public class CodeExecutionService {
         ProcessBuilder pb = new ProcessBuilder();
         pb.directory(dir);
         return switch (langInfo) {
-            case CPP    -> pb.command(execPath, "--seed", String.valueOf(seed), "--size", size);
+            case CPP    -> pb.command(execPath, String.valueOf(seed), size);
             case PYTHON -> pb.command(
                     isCommandAvailable("python3") ? "python3" : "python",
                     fileName, "--seed", String.valueOf(seed), "--size", size);
-            case JAVA   -> pb.command("java", langInfo.runArg,
-                    "--seed", String.valueOf(seed), "--size", size);
+            case JAVA   -> pb.command("java", langInfo.runArg, String.valueOf(seed), size);
         };
     }
 

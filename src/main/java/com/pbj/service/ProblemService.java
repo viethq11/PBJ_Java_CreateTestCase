@@ -236,6 +236,7 @@ public class ProblemService {
                 saveEdgeCases(p, dto.getEdgeCases(), goldenCode);
             }
 
+            aiIntegrationService.saveValidatedTestGeneration(description, base64Images, GENERATOR_RUNS.length, dto);
             return p;
         } catch (RuntimeException e) {
             aiIntegrationService.evictTestGenerationCache(description, base64Images, GENERATOR_RUNS.length);
@@ -275,6 +276,8 @@ public class ProblemService {
         try {
             int savedCount = generateTestCasesFromCode(problem, dto, goldenCode);
             verifyGenerationResult(problem, savedCount, problemId, goldenCode);
+            aiIntegrationService.saveValidatedTestGeneration(
+                    problem.getDescription(), new ArrayList<>(), GENERATOR_RUNS.length, dto);
         } catch (RuntimeException e) {
             aiIntegrationService.evictTestGenerationCache(problem.getDescription(), new ArrayList<>(), GENERATOR_RUNS.length);
             testCaseStorageService.deleteAllForProblem(problemId);
@@ -287,7 +290,7 @@ public class ProblemService {
     // ======================================================================
 
     private int generateTestCasesFromCode(Problem problem, AiResponseDTO dto, String goldenCode) {
-        String generatorCode     = dto.getGeneratorCode();
+        String generatorCode     = prepareValidGenerator(dto);
         String generatorLanguage = dto.getGeneratorLanguage() != null ? dto.getGeneratorLanguage() : "python";
 
         Set<String> fingerprints = new HashSet<>();
@@ -315,8 +318,11 @@ public class ProblemService {
                     continue;
                 }
 
-                if (!codeExecutionService.runValidator(dto.getValidatorCode(), generatedInput)) {
-                    System.err.println("DEBUG: Validator rejected generated input for seed=" + seed + " size=" + size);
+                CodeExecutionService.ValidatorResult validatorResult =
+                        codeExecutionService.runValidatorDetailed(dto.getValidatorCode(), generatedInput);
+                if (!validatorResult.valid) {
+                    System.err.println("DEBUG: Validator rejected generated input for seed=" + seed
+                            + " size=" + size + ": " + validatorResult.message);
                     rejectedGeneratedCount.incrementAndGet();
                     continue;
                 }
@@ -352,6 +358,55 @@ public class ProblemService {
         }
 
         return savedCount.get();
+    }
+
+    private String prepareValidGenerator(AiResponseDTO dto) {
+        String generatorCode = dto.getGeneratorCode();
+        if (generatorCode == null || generatorCode.isBlank()) return generatorCode;
+
+        String language = dto.getGeneratorLanguage() != null ? dto.getGeneratorLanguage() : "python";
+        String[] probeSizes = {"small", "medium", "large", "stress"};
+        int repairs = 0;
+        String lastError = "";
+
+        while (repairs <= 3) {
+            boolean allValid = true;
+            for (int i = 0; i < probeSizes.length; i++) {
+                int seed = 101 + i;
+                String size = probeSizes[i];
+                String generatedInput = codeExecutionService.runGenerator(generatorCode, language, seed, size);
+
+                if (generatedInput == null || generatedInput.isBlank()) {
+                    allValid = false;
+                    lastError = "Generator produced no output or timed out for seed=" + seed + " size=" + size;
+                    break;
+                }
+
+                CodeExecutionService.ValidatorResult validation =
+                        codeExecutionService.runValidatorDetailed(dto.getValidatorCode(), generatedInput);
+                if (!validation.valid) {
+                    allValid = false;
+                    lastError = validation.message + "\nGenerated input:\n" + generatedInput;
+                    break;
+                }
+            }
+
+            if (allValid) {
+                dto.setGeneratorCode(generatorCode);
+                dto.setGeneratorLanguage(language);
+                return generatorCode;
+            }
+
+            if (repairs == 3) break;
+            repairs++;
+            System.err.println("WARN: Generator failed probe validation. Repair attempt " + repairs + "/3: " + lastError);
+            generatorCode = aiIntegrationService.repairGenerator(dto, generatorCode, lastError);
+            language = "cpp";
+            dto.setGeneratorLanguage("cpp");
+        }
+
+        throw new IllegalStateException(
+                "Generated testcase artifact is invalid after generator repair attempts. Last error: " + lastError);
     }
 
     private int saveEdgeCases(Problem problem, List<AiResponseDTO.TestCaseDTO> edgeCases, String goldenCode) {

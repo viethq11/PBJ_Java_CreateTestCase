@@ -125,8 +125,8 @@ public class GeminiTestGenerationService {
                 NEVER output large arrays, N=100000 raw lines, or manually computed expected outputs.
 
                 ABSOLUTE RULE #2 — GENERATE CODE, NOT DATA
-                ALWAYS write generator_code, golden_solution, validator_code, and test_plan.
-                The backend will run these locally to create .in/.out files.
+                ALWAYS write golden_solution, validator_code, and test_plan.
+                Leave generator_code as an empty string. A local Ollama service will write the generator from your normalized spec.
 
                 ABSOLUTE RULE #3 — ADVERSARIAL TESTING
                 Include named test-family functions that target likely wrong solutions from analysis_json.
@@ -177,8 +177,8 @@ public class GeminiTestGenerationService {
                     }
                   },
                   "total_testcases": %d,
-                  "generator_language": "python",
-                  "generator_code": "Full Python generator script with argparse --seed INT --size STR",
+                  "generator_language": "cpp",
+                  "generator_code": "",
                   "golden_solution": "Complete correct C++17 solution",
                   "validator_rules": ["rule 1", "rule 2"],
                   "generation_strategy": {
@@ -192,17 +192,11 @@ public class GeminiTestGenerationService {
                   ]
                 }
 
-                generator_code requirements:
-                - Must be runnable Python 3.
-                - Must accept --seed INT and --size small|medium|large|stress.
-                - small: tiny brute-force-checkable cases.
-                - medium: varied random and adversarial cases.
-                - large: near-large cases.
-                - stress: largest relevant constraints from the statement whenever output size permits.
-                - Define named family functions matching test_plan.test_families.
-                - For graph n,m up to 2e5, include long chains, reverse chains, layered DAGs, disconnected components, and max sparse traps.
-                - For array/window/sum problems, include n max, k around n/2 if applicable, and values near +/-1e9.
-
+                test_plan requirements:
+                - Provide enough normalized detail for a separate local C++ generator model.
+                - For graph n,m up to 2e5, specify valid indexing, directedness, self-loop/multi-edge policy, edge weights/types, and max sparse traps.
+                - For array/window/sum problems, specify numeric min/max, n max, k-sensitive cases, and values near +/-1e9 when allowed.
+                
                 edge_cases: at most 3 tiny manually written cases. No huge raw data.
                 checker_code: empty string for unique-output problems.
                 """.formatted(

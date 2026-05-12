@@ -11,8 +11,10 @@ import org.springframework.transaction.annotation.Propagation;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -22,6 +24,7 @@ public class AiIntegrationService {
     private final AiCacheRepository aiCacheRepository;
     private final AiJobQueueService aiJobQueueService;
     private final OllamaAnalysisService ollamaAnalysisService;
+    private final OllamaGeneratorService ollamaGeneratorService;
     private final GeminiTestGenerationService geminiTestGenerationService;
     private final ObjectMapper objectMapper;
 
@@ -31,7 +34,7 @@ public class AiIntegrationService {
 
     public AiResponseDTO generateTestCases(String problemDescription, List<String> base64Images, int count, boolean bypassCache) {
         String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
-        String cacheKey = "ollama_gemini_pipeline_v3_" + generateHash(sourceFingerprint + "|count=" + count);
+        String cacheKey = pipelineCacheKey(sourceFingerprint, count);
 
         Optional<AiResponseDTO> cachedDto = readCache(cacheKey, AiResponseDTO.class, "pipeline");
         if (!bypassCache && cachedDto.isPresent()) {
@@ -57,7 +60,7 @@ public class AiIntegrationService {
         String normalizedProblemText = normalizeProblemText(problemText);
         String analysisJson = resolveAnalysisJson(normalizedProblemText);
 
-        String geminiKey = "gemini_artifacts_v2_" + generateHash(normalizedProblemText + "|" + analysisJson + "|count=" + count);
+        String geminiKey = "gemini_artifacts_v3_no_generator_" + generateHash(normalizedProblemText + "|" + analysisJson + "|count=" + count);
         Optional<AiResponseDTO> cachedGeminiDto = readCache(geminiKey, AiResponseDTO.class, "gemini-artifacts");
         AiResponseDTO dto;
         if (!bypassCache && cachedGeminiDto.isPresent()) {
@@ -68,9 +71,12 @@ public class AiIntegrationService {
             saveCache(geminiKey, dto, "gemini-artifacts");
         }
 
-        if (!bypassCache) {
-            saveCache(cacheKey, dto, "pipeline");
-        }
+        String generatorSpecJson = buildGeneratorSpecJson(normalizedProblemText, analysisJson, dto);
+        System.out.println("INFO: [AI Pipeline] Step 3 - Ollama local C++ generator...");
+        String generatorCode = ollamaGeneratorService.generateGenerator(generatorSpecJson);
+        dto.setGeneratorCode(generatorCode);
+        dto.setGeneratorLanguage("cpp");
+
         return dto;
     }
 
@@ -92,7 +98,7 @@ public class AiIntegrationService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void evictTestGenerationCache(String problemDescription, List<String> base64Images, int count) {
         String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
-        String pipelineKey = "ollama_gemini_pipeline_v3_" + generateHash(sourceFingerprint + "|count=" + count);
+        String pipelineKey = pipelineCacheKey(sourceFingerprint, count);
         evictCache(pipelineKey, "pipeline");
 
         String problemText = resolveProblemTextForCacheEviction(problemDescription, base64Images, sourceFingerprint);
@@ -100,10 +106,25 @@ public class AiIntegrationService {
         String analysisKey = "ollama_analysis_v2_" + generateHash(normalizedProblemText);
         Optional<String> cachedAnalysis = readCache(analysisKey, String.class, "ollama-analysis-evict-lookup");
         if (cachedAnalysis.isPresent()) {
-            String geminiKey = "gemini_artifacts_v2_" + generateHash(
+            String geminiKey = "gemini_artifacts_v3_no_generator_" + generateHash(
                     normalizedProblemText + "|" + cachedAnalysis.get() + "|count=" + count);
             evictCache(geminiKey, "gemini-artifacts");
         }
+    }
+
+    public String repairGenerator(AiResponseDTO dto, String previousGenerator, String validationError) {
+        String generatorSpecJson = buildGeneratorSpecJson(
+                normalizeProblemText(dto.getFormattedDescription()),
+                "{}",
+                dto);
+        return aiJobQueueService.runQueued("ollama-generator-repair", () ->
+                ollamaGeneratorService.repairGenerator(generatorSpecJson, previousGenerator, validationError));
+    }
+
+    public void saveValidatedTestGeneration(String problemDescription, List<String> base64Images,
+                                            int count, AiResponseDTO dto) {
+        String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
+        saveCache(pipelineCacheKey(sourceFingerprint, count), dto, "validated-pipeline");
     }
 
     private String resolveProblemText(String problemDescription, List<String> base64Images, String sourceFingerprint) {
@@ -225,6 +246,36 @@ public class AiIntegrationService {
         }
     }
 
+    private String buildGeneratorSpecJson(String problemText, String analysisJson, AiResponseDTO dto) {
+        try {
+            Map<String, Object> spec = new LinkedHashMap<>();
+            spec.put("problem_type", dto.getTestPlan() != null ? dto.getTestPlan().getProblemType() : "");
+            spec.put("constraints", dto.getConstraints());
+            spec.put("input_format", dto.getInputFormat());
+            spec.put("output_format", dto.getOutputFormat());
+            spec.put("analysis_json", analysisJson == null ? "{}" : analysisJson);
+            spec.put("test_plan", dto.getTestPlan());
+            spec.put("validator_rules", dto.getValidatorRules());
+            spec.put("size_profiles", Map.of(
+                    "small", "tiny valid testcase, preferably N <= 10 when applicable",
+                    "medium", "moderate valid testcase",
+                    "large", "near upper constraints but must finish under 1 second",
+                    "stress", "adversarial near max constraints, valid and deterministic"
+            ));
+            spec.put("safety_contract", Map.of(
+                    "node_indexing", "Use 1-based nodes unless the input_format explicitly says otherwise.",
+                    "no_node_zero", true,
+                    "binary_values", "If a field is binary, output only 0 or 1.",
+                    "no_unbounded_retry_loops", true,
+                    "no_invalid_input", true
+            ));
+            spec.put("problem_excerpt", problemText == null ? "" : problemText.substring(0, Math.min(problemText.length(), 4000)));
+            return objectMapper.writeValueAsString(spec);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to build generator spec JSON", e);
+        }
+    }
+
     private String generateHash(String input) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -260,5 +311,10 @@ public class AiIntegrationService {
 
     private String sourceFingerprint(String problemDescription, List<String> base64Images) {
         return normalizeProblemText(problemDescription) + "|images=" + imageFingerprint(base64Images);
+    }
+
+    private String pipelineCacheKey(String sourceFingerprint, int count) {
+        return "ollama_gemini_ollama_generator_pipeline_v5_"
+                + generateHash(sourceFingerprint + "|count=" + count);
     }
 }

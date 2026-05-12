@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>PBJ Judge - Hướng Dẫn Cài Đặt</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6}
+.hero{background:linear-gradient(135deg,#1e3a5f,#0f172a);padding:60px 20px;text-align:center}
+.hero h1{font-size:2.5rem;color:#60a5fa;margin-bottom:10px}
+.hero p{color:#94a3b8;font-size:1.1rem}
+.badges{display:flex;justify-content:center;gap:10px;margin-top:20px;flex-wrap:wrap}
+.badge{background:#1e293b;border:1px solid #334155;border-radius:20px;padding:5px 14px;font-size:.8rem;color:#60a5fa}
+.nav{background:#1e293b;border-bottom:1px solid #334155;position:sticky;top:0;z-index:99;padding:0 20px}
+.nav ul{list-style:none;display:flex;gap:5px;max-width:900px;margin:0 auto;overflow-x:auto}
+.nav a{display:block;padding:12px 16px;color:#94a3b8;text-decoration:none;font-size:.85rem;white-space:nowrap;transition:.2s}
+.nav a:hover{color:#60a5fa}
+.content{max-width:900px;margin:0 auto;padding:40px 20px}
+.section{margin-bottom:50px}
+.section h2{font-size:1.5rem;color:#60a5fa;border-left:4px solid #3b82f6;padding-left:14px;margin-bottom:20px}
+.section h3{color:#93c5fd;margin:20px 0 10px}
+.step{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px;margin-bottom:16px;position:relative}
+.step-num{position:absolute;top:-12px;left:16px;background:#3b82f6;color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700}
+.step h4{color:#e2e8f0;margin-bottom:8px;padding-left:4px}
+code{background:#0f172a;border:1px solid #334155;border-radius:4px;padding:2px 7px;font-family:'Courier New',monospace;font-size:.85em;color:#34d399}
+pre{background:#0f172a;border:1px solid #334155;border-radius:8px;padding:16px;overflow-x:auto;margin:10px 0}
+pre code{background:none;border:none;padding:0;color:#34d399}
+.alert{border-radius:8px;padding:14px;margin:12px 0;display:flex;gap:10px}
+.alert-warn{background:#422006;border:1px solid #92400e;color:#fed7aa}
+.alert-info{background:#0c1a40;border:1px solid #1e40af;color:#93c5fd}
+.alert-ok{background:#052e16;border:1px solid #166534;color:#86efac}
+.icon{font-size:1.2rem;flex-shrink:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px}
+.card h4{color:#60a5fa;margin-bottom:8px}
+.card p{color:#94a3b8;font-size:.9rem}
+table{width:100%;border-collapse:collapse;margin:10px 0}
+th{background:#0f172a;color:#60a5fa;padding:10px 12px;text-align:left;font-size:.85rem}
+td{padding:10px 12px;border-top:1px solid #334155;font-size:.9rem;color:#cbd5e1}
+td code{font-size:.8em}
+.tag{display:inline-block;background:#1e3a5f;color:#60a5fa;border-radius:4px;padding:2px 8px;font-size:.75rem;font-weight:600}
+footer{text-align:center;padding:30px;color:#475569;border-top:1px solid #1e293b;font-size:.85rem}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>⚡ PBJ Judge</h1>
+  <p>Hệ thống chấm bài tự động tích hợp AI — Hướng dẫn cài đặt & vận hành</p>
+  <div class="badges">
+    <span class="badge">☕ Java 21</span>
+    <span class="badge">🍃 Spring Boot 3.2</span>
+    <span class="badge">🐬 MySQL 8.0</span>
+    <span class="badge">🐳 Docker</span>
+    <span class="badge">🤖 Gemini 2.0 + Groq</span>
+  </div>
+</div>
+
+<nav class="nav">
+  <ul>
+    <li><a href="#overview">Tổng quan</a></li>
+    <li><a href="#prereq">Yêu cầu</a></li>
+    <li><a href="#apikeys">API Keys</a></li>
+    <li><a href="#install">Cài đặt</a></li>
+    <li><a href="#run">Chạy dự án</a></li>
+    <li><a href="#structure">Cấu trúc</a></li>
+    <li><a href="#troubleshoot">Lỗi thường gặp</a></li>
+  </ul>
+</nav>
+
+<div class="content">
+
+  <!-- OVERVIEW -->
+  <div class="section" id="overview">
+    <h2>📋 Tổng quan hệ thống</h2>
+    <div class="grid">
+      <div class="card">
+        <h4>🤖 AI Pipeline</h4>
+        <p>Sử dụng <strong>Gemini 2.0 Flash</strong> để phân tích đề bài và <strong>Groq (Llama 3.3 70B)</strong> để sinh test case tốc độ cao.</p>
+      </div>
+      <div class="card">
+        <h4>🛡️ Sandbox Bảo mật</h4>
+        <p>Code được thực thi trong sandbox cô lập với giới hạn bộ nhớ, CPU và tiến trình. Chống fork bomb, OOM.</p>
+      </div>
+      <div class="card">
+        <h4>🗄️ Database HA</h4>
+        <p>MySQL Master-Slave replication: Master xử lý ghi, Slave xử lý đọc — tăng hiệu năng và độ tin cậy.</p>
+      </div>
+      <div class="card">
+        <h4>⚡ Xử lý bất đồng bộ</h4>
+        <p>Các tác vụ nặng (sinh test case, chấm bài) chạy trên thread pool riêng. Frontend polling để cập nhật kết quả.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- PREREQUISITES -->
+  <div class="section" id="prereq">
+    <h2>🔧 Yêu cầu môi trường</h2>
+    <table>
+      <tr><th>Công cụ</th><th>Phiên bản tối thiểu</th><th>Mục đích</th><th>Tải về</th></tr>
+      <tr><td><strong>Docker Desktop</strong></td><td>≥ 4.0</td><td>Chạy toàn bộ hệ thống</td><td><a href="https://www.docker.com/products/docker-desktop" style="color:#60a5fa">docker.com</a></td></tr>
+      <tr><td><strong>JDK 21</strong></td><td>21 (LTS)</td><td>Biên dịch mã nguồn</td><td><a href="https://adoptium.net" style="color:#60a5fa">adoptium.net</a></td></tr>
+      <tr><td><strong>Apache Maven</strong></td><td>≥ 3.9</td><td>Build project</td><td><a href="https://maven.apache.org" style="color:#60a5fa">maven.apache.org</a></td></tr>
+    </table>
+    <div class="alert alert-warn">
+      <span class="icon">⚠️</span>
+      <div>Yêu cầu bắt buộc: <strong>Docker Desktop phải đang chạy</strong> trước khi thực hiện bất kỳ bước nào bên dưới.</div>
+    </div>
+
+    <h3>Kiểm tra nhanh</h3>
+    <pre><code># Kiểm tra phiên bản
+java -version          # Cần: openjdk 21
+mvn -version           # Cần: Apache Maven 3.9+
+docker --version       # Cần: Docker 4.0+
+docker-compose --version</code></pre>
+  </div>
+
+  <!-- API KEYS -->
+  <div class="section" id="apikeys">
+    <h2>🔑 Lấy API Keys</h2>
+
+    <div class="step">
+      <div class="step-num">1</div>
+      <h4>Gemini API Key (Google AI Studio)</h4>
+      <p style="color:#94a3b8;margin-bottom:8px">Dùng để phân tích đề bài và sinh code mẫu (AC/WA/TLE).</p>
+      <ol style="padding-left:20px;color:#94a3b8;font-size:.9rem;line-height:2">
+        <li>Truy cập <a href="https://aistudio.google.com/app/apikey" style="color:#60a5fa">aistudio.google.com/app/apikey</a></li>
+        <li>Đăng nhập bằng tài khoản Google</li>
+        <li>Nhấn <strong>"Create API key"</strong></li>
+        <li>Copy key và lưu vào file <code>.env</code></li>
+      </ol>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <h4>Groq API Key (Groq Cloud)</h4>
+      <p style="color:#94a3b8;margin-bottom:8px">Dùng để sinh test case tốc độ cao qua mô hình Llama 3.3 70B.</p>
+      <ol style="padding-left:20px;color:#94a3b8;font-size:.9rem;line-height:2">
+        <li>Truy cập <a href="https://console.groq.com/keys" style="color:#60a5fa">console.groq.com/keys</a></li>
+        <li>Đăng ký / Đăng nhập tài khoản</li>
+        <li>Nhấn <strong>"Create API Key"</strong></li>
+        <li>Copy key và lưu vào file <code>.env</code></li>
+      </ol>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <h4>Tạo file <code>.env</code> tại thư mục gốc dự án</h4>
+      <pre><code>GEMINI_API_KEY=AIzaSy...your_key_here
+GROQ_API_KEY=gsk_...your_key_here</code></pre>
+      <div class="alert alert-warn" style="margin-top:10px">
+        <span class="icon">🔒</span>
+        <div>File <code>.env</code> đã được thêm vào <code>.gitignore</code>. <strong>Không commit file này lên Git.</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- INSTALL -->
+  <div class="section" id="install">
+    <h2>📦 Cài đặt dự án</h2>
+
+    <div class="step">
+      <div class="step-num">1</div>
+      <h4>Clone repository</h4>
+      <pre><code>git clone https://github.com/your-username/pbj-judge.git
+cd pbj-judge</code></pre>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <h4>Tạo file <code>.env</code> với API keys (xem mục trên)</h4>
+      <pre><code>GEMINI_API_KEY=your_gemini_api_key
+GROQ_API_KEY=your_groq_api_key</code></pre>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <h4>Build mã nguồn Java bằng Maven</h4>
+      <pre><code>mvn clean package -DskipTests</code></pre>
+      <div class="alert alert-info">
+        <span class="icon">ℹ️</span>
+        <div>Lần đầu chạy sẽ tốn thời gian tải dependencies (~2-3 phút). Các lần sau sẽ nhanh hơn do được cache.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">4</div>
+      <h4>Khởi động toàn bộ hệ thống bằng Docker Compose</h4>
+      <pre><code>docker-compose up -d --build</code></pre>
+      <p style="color:#94a3b8;margin-top:8px;font-size:.9rem">
+        Docker sẽ tự động:<br>
+        ✅ Build image ứng dụng từ Dockerfile<br>
+        ✅ Khởi động MySQL Master (port 3307) và MySQL Slave (port 3308)<br>
+        ✅ Đợi database sẵn sàng (healthcheck) rồi mới chạy app<br>
+        ✅ Tạo thư mục <code>testcase_data/</code> để lưu trữ dữ liệu test case
+      </p>
+    </div>
+
+    <div class="step">
+      <div class="step-num">5</div>
+      <h4>Xác nhận hệ thống đang chạy</h4>
+      <pre><code>docker ps</code></pre>
+      <p style="color:#94a3b8;margin-top:8px;font-size:.9rem">Bạn sẽ thấy 3 container đang chạy:</p>
+      <table style="margin-top:10px">
+        <tr><th>Container</th><th>Port</th><th>Mô tả</th></tr>
+        <tr><td><code>pbj-judge-app</code></td><td>8080</td><td>Ứng dụng Spring Boot chính</td></tr>
+        <tr><td><code>mysql-master</code></td><td>3307</td><td>MySQL Master (đọc + ghi)</td></tr>
+        <tr><td><code>mysql-slave</code></td><td>3308</td><td>MySQL Slave (chỉ đọc)</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- RUN -->
+  <div class="section" id="run">
+    <h2>🚀 Sử dụng hệ thống</h2>
+
+    <div class="alert alert-ok">
+      <span class="icon">✅</span>
+      <div>Sau khi cài đặt xong, truy cập: <strong><a href="http://localhost:8080" style="color:#86efac">http://localhost:8080</a></strong></div>
+    </div>
+
+    <h3>Luồng sử dụng cơ bản</h3>
+    <div class="step">
+      <div class="step-num">1</div>
+      <h4>Tạo bài tập mới</h4>
+      <p style="color:#94a3b8">Nhấn <strong>"Tạo bài mới"</strong> → Nhập tiêu đề → Upload ảnh đề bài (tùy chọn) hoặc nhập mô tả → Nhấn <strong>"Phân Tích & Tạo Đề"</strong>. AI sẽ xử lý trong nền (30–90 giây).</p>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <h4>Kiểm tra bài tập</h4>
+      <p style="color:#94a3b8">Nhấn vào tên bài tập → Xem đề bài, test case mẫu → Nhập code → Chọn ngôn ngữ → Nhấn <strong>"Chạy mã nguồn & Kiểm tra"</strong>.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <h4>Tạo lại test case</h4>
+      <p style="color:#94a3b8">Trong trang chi tiết bài tập → Nhấn nút <strong>"Tạo lại"</strong> → Xác nhận → Đợi AI sinh test case mới.</p>
+    </div>
+
+    <h3>Các lệnh quản trị hữu ích</h3>
+    <pre><code># Xem log ứng dụng
+docker logs pbj-judge-app --tail 50 -f
+
+# Khởi động lại app (không rebuild)
+docker-compose restart app
+
+# Dừng toàn bộ hệ thống
+docker-compose down
+
+# Dừng và XÓA dữ liệu database (cẩn thận!)
+docker-compose down -v
+
+# Rebuild và khởi động lại sau khi sửa code
+mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pre>
+  </div>
+
+  <!-- STRUCTURE -->
+  <div class="section" id="structure">
+    <h2>🗂️ Cấu trúc thư mục</h2>
+    <pre><code>PBJ_JUDGE/
+├── src/
+│   └── main/
+│       ├── java/com/pbj/
+│       │   ├── config/          # AsyncConfig, DataSource config
+│       │   ├── controller/      # ProblemController (REST endpoints)
+│       │   ├── dto/             # AiResponseDTO
+│       │   ├── entity/          # Problem, TestCase entities
+│       │   ├── repository/      # JPA Repositories
+│       │   └── service/
+│       │       ├── AiIntegrationService.java    # Gemini + Groq AI pipeline
+│       │       ├── CodeExecutionService.java    # Sandbox thực thi code
+│       │       ├── JobQueueService.java         # Quản lý async jobs
+│       │       ├── ProblemService.java          # Logic nghiệp vụ chính
+│       │       └── TestCaseStorageService.java  # Lưu file test case
+│       └── resources/
+│           ├── application.yml  # Cấu hình Spring Boot
+│           └── templates/       # Giao diện Thymeleaf (index, problem, create)
+├── mysql/
+│   ├── master_conf/  # Cấu hình MySQL Master
+│   ├── master_data/  # Dữ liệu MySQL Master (auto-generated)
+│   ├── slave_conf/   # Cấu hình MySQL Slave
+│   └── slave_data/   # Dữ liệu MySQL Slave (auto-generated)
+├── testcase_data/    # File .in/.out của test case (bind mount)
+├── .env              # API keys (KHÔNG commit lên Git)
+├── docker-compose.yml
+├── Dockerfile
+└── pom.xml</code></pre>
+
+    <h3>Kiến trúc AI Pipeline</h3>
+    <div class="card" style="margin-top:10px">
+      <p style="color:#94a3b8;font-size:.9rem;line-height:2">
+        <span class="tag">Bước 1</span> Người dùng nhập đề bài (text + ảnh)<br>
+        <span class="tag">Bước 2</span> <strong>Gemini 2.5 Flash</strong> phân tích → sinh JSON (mô tả, format I/O, constraints, generator code, golden solution)<br>
+        <span class="tag">Bước 3</span> Generator script chạy trong sandbox → sinh input data với nhiều seed<br>
+        <span class="tag">Bước 4</span> Golden solution (C++) chạy trên mỗi input → sinh expected output<br>
+        <span class="tag">Bước 5</span> File <code>.in</code>/<code>.out</code> lưu vào <code>testcase_data/problem_X/</code><br>
+        <span class="tag">Bước 6</span> Kiểm tra verdict separation: AC solution pass, WA probe fail, TLE probe timeout
+      </p>
+    </div>
+  </div>
+
+  <!-- TROUBLESHOOT -->
+  <div class="section" id="troubleshoot">
+    <h2>🛠️ Xử lý lỗi thường gặp</h2>
+
+    <div class="step">
+      <div class="step-num">!</div>
+      <h4>Container không khởi động được</h4>
+      <pre><code>docker logs pbj-judge-app 2>&1 | tail -30</code></pre>
+      <p style="color:#94a3b8;font-size:.9rem">Nếu lỗi <em>"Connection refused"</em> → MySQL chưa sẵn sàng. Đợi thêm 30 giây rồi chạy lại <code>docker-compose up -d</code>.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-num">!</div>
+      <h4>Lỗi <code>401 Unauthorized</code> từ AI</h4>
+      <p style="color:#94a3b8;font-size:.9rem">API key không hợp lệ hoặc hết quota. Kiểm tra file <code>.env</code> và thử key mới tại Google AI Studio / Groq Console.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-num">!</div>
+      <h4>Lỗi <code>BUILD FAILURE</code> khi chạy Maven</h4>
+      <pre><code># Kiểm tra phiên bản Java
+java -version   # Phải là 21
+
+# Xóa cache và build lại
+mvn clean package -DskipTests -U</code></pre>
+    </div>
+
+    <div class="step">
+      <div class="step-num">!</div>
+      <h4>Test case không hiển thị sau khi tạo bài</h4>
+      <p style="color:#94a3b8;font-size:.9rem">Kiểm tra thư mục <code>testcase_data/</code> — nếu trống thì generator đã thất bại. Xem log: <code>docker logs pbj-judge-app | grep "DEBUG\|ERROR"</code>. Thử nhấn "Tạo lại" trong trang bài tập.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-num">!</div>
+      <h4>Port 8080 đã bị chiếm</h4>
+      <pre><code># Tìm process đang dùng port 8080
+netstat -ano | findstr :8080
+
+# Hoặc đổi port trong docker-compose.yml
+ports:
+  - "8081:8080"   # Dùng port 8081 thay thế</code></pre>
+    </div>
+
+    <div class="alert alert-info" style="margin-top:20px">
+      <span class="icon">💡</span>
+      <div><strong>Tip:</strong> Để xem log realtime của cả hệ thống: <code>docker-compose logs -f</code></div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  PBJ Judge — Hệ thống chấm bài tự động tích hợp AI &nbsp;|&nbsp; Spring Boot 3.2 · MySQL 8 · Docker · Gemini · Groq
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,72 @@
+services:
+  app:
+    build: .
+    container_name: pbj-judge-app
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_DATASOURCE_MASTER_JDBC_URL=jdbc:mysql://mysql-master:3306/pbj_judge?allowPublicKeyRetrieval=true&useSSL=false&createDatabaseIfNotExist=true
+      - SPRING_DATASOURCE_MASTER_USERNAME=root
+      - SPRING_DATASOURCE_MASTER_PASSWORD=root_password
+      - SPRING_DATASOURCE_SLAVE_JDBC_URL=jdbc:mysql://mysql-master:3306/pbj_judge?allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATASOURCE_SLAVE_USERNAME=root
+      - SPRING_DATASOURCE_SLAVE_PASSWORD=root_password
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+      mysql-slave:
+        condition: service_healthy
+    volumes:
+      - testcase-data:/app/testcase-data
+    networks:
+      - pbj-network
+
+  mysql-master:
+    image: mysql:8.0
+    container_name: mysql-master
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: pbj_judge
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql/master_conf:/etc/mysql/conf.d
+      - ./mysql/master_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pbj-network
+
+  mysql-slave:
+    image: mysql:8.0
+    container_name: mysql-slave
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: pbj_judge
+    ports:
+      - "3308:3306"
+    depends_on:
+      - mysql-master
+    volumes:
+      - ./mysql/slave_conf:/etc/mysql/conf.d
+      - ./mysql/slave_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pbj-network
+
+networks:
+  pbj-network:
+    driver: bridge
+
+volumes:
+  testcase-data:
+    driver: local

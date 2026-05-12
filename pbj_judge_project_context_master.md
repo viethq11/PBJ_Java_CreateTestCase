@@ -40,7 +40,7 @@ Nhưng được mở rộng bằng AI pipeline.
 
 ## AI
 - Google Gemini
-- Groq (Llama 3.x 70B)
+- OpenAI ChatGPT (GPT-4o)
 - LangChain4j
 
 ## Infrastructure
@@ -85,7 +85,7 @@ ProblemService
   ↓
 AI Integration Service
   ↓
-Gemini / Groq
+Gemini / OpenAI
   ↓
 AI Response JSON
   ↓
@@ -445,7 +445,7 @@ docker-compose down -v
 
 ```env
 GEMINI_API_KEY=...
-GROQ_API_KEY=...
+OPENAI_API_KEY=...
 ```
 
 `.env` nằm trong `.gitignore`.
@@ -652,7 +652,7 @@ Key extracted facts:
 - Spring Boot 3.2
 - Java 21
 - MySQL master/slave
-- Gemini + Groq
+- Gemini + OpenAI
 - Docker deployment
 - AI-generated generator architecture
 - sandbox execution

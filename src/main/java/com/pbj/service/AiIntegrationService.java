@@ -47,14 +47,14 @@ public class AiIntegrationService {
     @Value("${ai.gemini.timeout-seconds:120}")
     private int timeoutSeconds;
 
-    @Value("${ai.groq.base-url}")
-    private String groqBaseUrl;
+    @Value("${ai.openai.base-url}")
+    private String openAiBaseUrl;
 
-    @Value("${ai.groq.api-key}")
-    private String groqApiKey;
+    @Value("${ai.openai.api-key}")
+    private String openAiApiKey;
 
-    @Value("${ai.groq.model}")
-    private String groqModel;
+    @Value("${ai.openai.model}")
+    private String openAiModel;
 
     private final ObjectMapper objectMapper = JsonMapper.builder()
             // Chấp nhận tên field không có ngoặc kép
@@ -78,7 +78,7 @@ public class AiIntegrationService {
     }
 
     public AiResponseDTO generateTestCases(String problemDescription, List<String> base64Images, int count, boolean bypassCache) {
-        String cacheKey = "analysis_" + generateHash(problemDescription
+        String cacheKey = "openai_analysis_" + generateHash(problemDescription
                 + (base64Images != null ? String.join("", base64Images) : "") + count);
         Optional<AiCache> cached = aiCacheRepository.findByRequestHash(cacheKey);
 
@@ -92,13 +92,13 @@ public class AiIntegrationService {
         }
 
         // Luồng xử lý:
-        // - Có ảnh: Gemini đọc ảnh → trích xuất text đề bài → Groq phân tích + sinh code
-        // - Không có ảnh: Groq phân tích trực tiếp
+        // - Có ảnh: Gemini đọc ảnh → trích xuất text đề bài → OpenAI phân tích + sinh code
+        // - Không có ảnh: OpenAI phân tích trực tiếp
         AiResponseDTO dto;
         if (base64Images != null && !base64Images.isEmpty()) {
             dto = callImagePipeline(problemDescription, base64Images, count);
         } else {
-            dto = callGroqForFullAnalysis(problemDescription, count);
+            dto = callOpenAiForFullAnalysis(problemDescription, count);
         }
 
         // Persist to cache
@@ -117,7 +117,7 @@ public class AiIntegrationService {
     // =====================================================================
     // PRIVATE: 2-step pipeline for image input
     // Step 1: Gemini reads image and extracts problem text
-    // Step 2: Groq performs full analysis + code generation on extracted text
+    // Step 2: OpenAI performs full analysis + code generation on extracted text
     // =====================================================================
 
     private AiResponseDTO callImagePipeline(String problemDescription, List<String> base64Images, int count) {
@@ -131,8 +131,8 @@ public class AiIntegrationService {
             System.out.println("INFO: [Image Pipeline] Step 1 complete. Extracted " + extractedText.length() + " chars.");
         }
 
-        System.out.println("INFO: [Image Pipeline] Step 2 - Groq analyzing extracted text and generating code...");
-        return callGroqForFullAnalysis(extractedText, count);
+        System.out.println("INFO: [Image Pipeline] Step 2 - OpenAI analyzing extracted text and generating code...");
+        return callOpenAiForFullAnalysis(extractedText, count);
     }
 
     // =====================================================================
@@ -172,19 +172,19 @@ public class AiIntegrationService {
     }
 
     // =====================================================================
-    // PRIVATE: Groq — full analysis (text only)
+    // PRIVATE: OpenAI — full analysis (text only)
     // =====================================================================
 
-    private AiResponseDTO callGroqForFullAnalysis(String problemDescription, int count) {
-        String url = groqBaseUrl + "/chat/completions";
+    private AiResponseDTO callOpenAiForFullAnalysis(String problemDescription, int count) {
+        String url = openAiBaseUrl + "/chat/completions";
         String prompt = buildAnalysisPrompt(problemDescription, count);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(groqApiKey);
+        headers.setBearerAuth(openAiApiKey);
 
         Map<String, Object> requestBody = Map.of(
-                "model", groqModel,
+                "model", openAiModel,
                 "messages", List.of(Map.of("role", "user", "content", prompt))
         );
 
@@ -203,15 +203,15 @@ public class AiIntegrationService {
 
             } catch (HttpServerErrorException.ServiceUnavailable | HttpClientErrorException.TooManyRequests e) {
                 if (attempt == maxRetries) {
-                    throw new RuntimeException("Groq API (Analysis) đang quá tải sau " + maxRetries + " lần thử.", e);
+                    throw new RuntimeException("OpenAI API (Analysis) đang quá tải sau " + maxRetries + " lần thử.", e);
                 }
                 long sleepTime = backoffMs[attempt - 1];
-                System.err.println("!!! RATE LIMIT !!! Groq Analysis. Sleeping " + (sleepTime / 1000) + "s before retry "
+                System.err.println("!!! RATE LIMIT !!! OpenAI Analysis. Sleeping " + (sleepTime / 1000) + "s before retry "
                         + (attempt + 1) + "/" + maxRetries);
                 try { Thread.sleep(sleepTime); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
 
             } catch (Exception e) {
-                throw new RuntimeException("Groq Analysis Failed: " + e.getMessage(), e);
+                throw new RuntimeException("OpenAI Analysis Failed: " + e.getMessage(), e);
             }
         }
         return new AiResponseDTO();

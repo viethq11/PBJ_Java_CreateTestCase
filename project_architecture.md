@@ -10,7 +10,7 @@ Dưới đây là tài liệu tổng hợp về cách hệ thống hoạt độn
 - **Backend:** Java 21, Spring Boot 3.2.4 (Spring Web, Spring Data JPA, Spring AOP).
 - **Frontend:** HTML5, Tailwind CSS (qua CDN), Thymeleaf (Server-side rendering).
 - **Database:** MySQL 8.0 (thiết lập Master-Slave).
-- **AI Integration:** Thư viện `LangChain4j` kết nối với API của Google Gemini (hoặc Groq/Ollama).
+- **AI Integration:** Kết nối với API của Google Gemini và OpenAI ChatGPT.
 - **Infrastructure:** Docker & Docker Compose để container hóa và quản lý các service.
 
 ---

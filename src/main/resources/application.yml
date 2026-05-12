@@ -41,8 +41,8 @@ ai:
     model: gemini-2.0-flash
     pro-model: gemini-2.5-flash
     timeout-seconds: 120
-  groq:
-    base-url: https://api.groq.com/openai/v1
-    api-key: ${GROQ_API_KEY}
-    model: llama-3.3-70b-versatile
+  openai:
+    base-url: https://api.openai.com/v1
+    api-key: ${OPENAI_API_KEY}
+    model: gpt-4o
     timeout-seconds: 120

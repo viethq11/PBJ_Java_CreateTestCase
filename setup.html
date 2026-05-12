@@ -52,7 +52,7 @@ footer{text-align:center;padding:30px;color:#475569;border-top:1px solid #1e293b
     <span class="badge">🍃 Spring Boot 3.2</span>
     <span class="badge">🐬 MySQL 8.0</span>
     <span class="badge">🐳 Docker</span>
-    <span class="badge">🤖 Gemini 2.0 + Groq</span>
+    <span class="badge">🤖 Gemini 2.0 + OpenAI</span>
   </div>
 </div>
 
@@ -76,7 +76,7 @@ footer{text-align:center;padding:30px;color:#475569;border-top:1px solid #1e293b
     <div class="grid">
       <div class="card">
         <h4>🤖 AI Pipeline</h4>
-        <p>Sử dụng <strong>Gemini 2.0 Flash</strong> để phân tích đề bài và <strong>Groq (Llama 3.3 70B)</strong> để sinh test case tốc độ cao.</p>
+        <p>Sử dụng <strong>Gemini 2.0 Flash</strong> để đọc ảnh đề bài và <strong>OpenAI GPT-4o</strong> để phân tích, sinh generator và golden solution.</p>
       </div>
       <div class="card">
         <h4>🛡️ Sandbox Bảo mật</h4>
@@ -133,12 +133,12 @@ docker-compose --version</code></pre>
 
     <div class="step">
       <div class="step-num">2</div>
-      <h4>Groq API Key (Groq Cloud)</h4>
-      <p style="color:#94a3b8;margin-bottom:8px">Dùng để sinh test case tốc độ cao qua mô hình Llama 3.3 70B.</p>
+      <h4>OpenAI API Key</h4>
+      <p style="color:#94a3b8;margin-bottom:8px">Dùng để phân tích đề bài, sinh test plan, generator và golden solution qua mô hình GPT-4o.</p>
       <ol style="padding-left:20px;color:#94a3b8;font-size:.9rem;line-height:2">
-        <li>Truy cập <a href="https://console.groq.com/keys" style="color:#60a5fa">console.groq.com/keys</a></li>
-        <li>Đăng ký / Đăng nhập tài khoản</li>
-        <li>Nhấn <strong>"Create API Key"</strong></li>
+        <li>Truy cập <a href="https://platform.openai.com/api-keys" style="color:#60a5fa">platform.openai.com/api-keys</a></li>
+        <li>Đăng nhập tài khoản OpenAI</li>
+        <li>Nhấn <strong>"Create new secret key"</strong></li>
         <li>Copy key và lưu vào file <code>.env</code></li>
       </ol>
     </div>
@@ -147,7 +147,7 @@ docker-compose --version</code></pre>
       <div class="step-num">3</div>
       <h4>Tạo file <code>.env</code> tại thư mục gốc dự án</h4>
       <pre><code>GEMINI_API_KEY=AIzaSy...your_key_here
-GROQ_API_KEY=gsk_...your_key_here</code></pre>
+OPENAI_API_KEY=sk-...your_key_here</code></pre>
       <div class="alert alert-warn" style="margin-top:10px">
         <span class="icon">🔒</span>
         <div>File <code>.env</code> đã được thêm vào <code>.gitignore</code>. <strong>Không commit file này lên Git.</strong></div>
@@ -170,7 +170,7 @@ cd pbj-judge</code></pre>
       <div class="step-num">2</div>
       <h4>Tạo file <code>.env</code> với API keys (xem mục trên)</h4>
       <pre><code>GEMINI_API_KEY=your_gemini_api_key
-GROQ_API_KEY=your_groq_api_key</code></pre>
+OPENAI_API_KEY=your_openai_api_key</code></pre>
     </div>
 
     <div class="step">
@@ -266,7 +266,7 @@ mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pr
 │       │   ├── entity/          # Problem, TestCase entities
 │       │   ├── repository/      # JPA Repositories
 │       │   └── service/
-│       │       ├── AiIntegrationService.java    # Gemini + Groq AI pipeline
+│       │       ├── AiIntegrationService.java    # Gemini + OpenAI AI pipeline
 │       │       ├── CodeExecutionService.java    # Sandbox thực thi code
 │       │       ├── JobQueueService.java         # Quản lý async jobs
 │       │       ├── ProblemService.java          # Logic nghiệp vụ chính
@@ -312,7 +312,7 @@ mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pr
     <div class="step">
       <div class="step-num">!</div>
       <h4>Lỗi <code>401 Unauthorized</code> từ AI</h4>
-      <p style="color:#94a3b8;font-size:.9rem">API key không hợp lệ hoặc hết quota. Kiểm tra file <code>.env</code> và thử key mới tại Google AI Studio / Groq Console.</p>
+      <p style="color:#94a3b8;font-size:.9rem">API key không hợp lệ hoặc hết quota. Kiểm tra file <code>.env</code> và thử key mới tại Google AI Studio / OpenAI Platform.</p>
     </div>
 
     <div class="step">
@@ -351,7 +351,7 @@ ports:
 </div>
 
 <footer>
-  PBJ Judge — Hệ thống chấm bài tự động tích hợp AI &nbsp;|&nbsp; Spring Boot 3.2 · MySQL 8 · Docker · Gemini · Groq
+  PBJ Judge — Hệ thống chấm bài tự động tích hợp AI &nbsp;|&nbsp; Spring Boot 3.2 · MySQL 8 · Docker · Gemini · OpenAI
 </footer>
 
 </body>

@@ -8,6 +8,9 @@ build/
 node_modules/
 dist/
 out/
+testcase_data/
+mysql/
+.tools/
 *.zip
 *.rar
 *.7z

@@ -137,15 +137,47 @@ public class GeminiTestGenerationService {
                 Output ONLY a valid JSON object. No markdown.
                 Inside string values, represent newlines using literal \\n.
                 Inside string values, escape all double-quotes as \\" and all backslashes as \\\\.
+
+                ABSOLUTE RULE #5 — VIETNAMESE USER-FACING STATEMENT
+                The user-facing problem statement fields MUST be written in Vietnamese:
+                - formatted_description: Vietnamese only, preserving formulas, variable names, and math notation.
+                - input_format: Vietnamese only, clearly explaining every input line/token.
+                - output_format: Vietnamese only, clearly explaining what to print.
+                Keep machine-readable fields such as input_schema, code, identifiers, and JSON keys unchanged.
                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
                 Return EXACTLY this JSON structure:
                 {
-                  "formatted_description": "Formatted problem statement with \\n\\n paragraphs",
+                  "formatted_description": "Mô tả bài toán đã được trình bày bằng tiếng Việt, chia đoạn bằng \\n\\n",
                   "understanding": "Brief summary of the problem logic",
-                  "input_format": "Detailed input format description",
-                  "output_format": "Detailed output format description",
-                  "constraints": "Constraints",
+                  "input_format": "Mô tả chi tiết định dạng dữ liệu vào bằng tiếng Việt",
+                  "output_format": "Mô tả chi tiết định dạng dữ liệu ra bằng tiếng Việt",
+                  "constraints": "Các ràng buộc",
+                  "input_schema": {
+                    "multiple_test_cases": false,
+                    "lines": [
+                      {
+                        "kind": "scalars",
+                        "fields": [
+                          {"name": "N", "type": "int", "min": 1, "max": 200000},
+                          {"name": "M", "type": "int", "min": 1, "max": 200000}
+                        ]
+                      },
+                      {"kind": "array", "name": "A", "type": "int", "length": "N", "min": 1, "max": 1000000000},
+                      {
+                        "kind": "edges",
+                        "length": "M",
+                        "directed": true,
+                        "self_loop_allowed": false,
+                        "multi_edge_allowed": false,
+                        "columns": [
+                          {"name": "u", "type": "node", "min": 1, "max": "N"},
+                          {"name": "v", "type": "node", "min": 1, "max": "N"},
+                          {"name": "w", "type": "int", "min": 1, "max": 1000000000}
+                        ]
+                      }
+                    ]
+                  },
                   "checker_code": "Java Checker code if special judge needed, else empty string",
                   "validator_code": "Complete Python 3 validator. Read stdin, assert input format/constraints, exit non-zero on invalid input.",
                   "test_plan": {
@@ -196,9 +228,22 @@ public class GeminiTestGenerationService {
                 - Provide enough normalized detail for a separate local C++ generator model.
                 - For graph n,m up to 2e5, specify valid indexing, directedness, self-loop/multi-edge policy, edge weights/types, and max sparse traps.
                 - For array/window/sum problems, specify numeric min/max, n max, k-sensitive cases, and values near +/-1e9 when allowed.
+
+                input_schema requirements:
+                - It must describe the exact input tokens in order, line by line.
+                - Use only machine-readable JSON, not prose.
+                - Supported line kinds: scalars, array, matrix, edges, queries, grid, string, raw_lines.
+                - For each scalar/array/matrix value include numeric min/max when known.
+                - Use length references such as "N", "M", "Q", "N-1" only when that scalar appears earlier.
+                - For graph-like data include node indexing, directedness, self-loop policy, multi-edge policy, and every column.
+                - If the statement is complex, still provide the safest broad schema that always generates valid input.
                 
                 edge_cases: at most 3 tiny manually written cases. No huge raw data.
                 checker_code: empty string for unique-output problems.
+                Final language check before returning:
+                - formatted_description, input_format, and output_format must not be English prose.
+                - If the original statement is English, translate those three fields to Vietnamese.
+                - Do not translate variable names, constants, sample input/output data, or source code.
                 """.formatted(
                 problemText == null ? "" : problemText,
                 analysisJson == null ? "{}" : analysisJson,
@@ -221,6 +266,10 @@ public class GeminiTestGenerationService {
             dto.setInputFormat(root.path("input_format").asText(root.path("input").asText("")));
             dto.setOutputFormat(root.path("output_format").asText(root.path("output").asText("")));
             dto.setConstraints(root.path("constraints").asText(""));
+            JsonNode inputSchemaNode = root.path("input_schema");
+            if (!inputSchemaNode.isMissingNode() && !inputSchemaNode.isNull()) {
+                dto.setInputSchema(inputSchemaNode.deepCopy());
+            }
             dto.setCheckerCode(root.path("checker_code").asText(""));
             dto.setValidatorCode(root.path("validator_code").asText(""));
             dto.setTotalTestcases(root.path("total_testcases").asInt(10));

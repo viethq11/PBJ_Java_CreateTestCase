@@ -232,6 +232,10 @@ public class CodeExecutionService {
             }
 
             ProcessBuilder pb = buildGeneratorCommand(langInfo, dirFile, fileName, seed, size);
+            File stdoutFile = new File(dirFile, "generator_stdout.txt");
+            File stderrFile = new File(dirFile, "generator_stderr.txt");
+            pb.redirectOutput(stdoutFile);
+            pb.redirectError(stderrFile);
             Process process   = pb.start();
 
             boolean finished = process.waitFor(30, TimeUnit.SECONDS);
@@ -243,24 +247,18 @@ public class CodeExecutionService {
             }
 
             if (process.exitValue() != 0) {
-                String error = readStream(process.getErrorStream());
+                String error = readFileLimited(stderrFile.toPath(), 50);
                 System.err.println("DEBUG: Generator exited with error: " + error);
                 return new GeneratorResult(false, null,
                         "Generator exited with error for seed=" + seed + " size=" + size + ":\n" + error);
             }
 
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
-                StringBuilder sb = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) sb.append(line).append("\n");
-                String output = sb.toString().trim();
-                if (output.isBlank()) {
-                    return new GeneratorResult(false, null,
-                            "Generator produced empty output for seed=" + seed + " size=" + size);
-                }
-                return new GeneratorResult(true, output, "OK");
+            String output = Files.readString(stdoutFile.toPath()).trim();
+            if (output.isBlank()) {
+                return new GeneratorResult(false, null,
+                        "Generator produced empty output for seed=" + seed + " size=" + size);
             }
+            return new GeneratorResult(true, output, "OK");
 
         } catch (Exception e) {
             System.err.println("DEBUG: Generator run failed: " + e.getMessage());
@@ -633,6 +631,20 @@ public class CodeExecutionService {
             String line;
             int linesRead = 0;
             while ((line = reader.readLine()) != null && linesRead < 50) {
+                sb.append(line).append("\n");
+                linesRead++;
+            }
+            return sb.toString().trim();
+        }
+    }
+
+    private String readFileLimited(Path path, int maxLines) throws IOException {
+        if (path == null || !Files.exists(path)) return "";
+        try (BufferedReader reader = Files.newBufferedReader(path)) {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            int linesRead = 0;
+            while ((line = reader.readLine()) != null && linesRead < maxLines) {
                 sb.append(line).append("\n");
                 linesRead++;
             }

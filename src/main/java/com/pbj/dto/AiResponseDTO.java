@@ -1,6 +1,7 @@
 package com.pbj.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Data;
 
 import java.util.List;
@@ -20,6 +21,9 @@ public class AiResponseDTO {
     private String outputFormat;
 
     private String constraints;
+
+    @JsonProperty("input_schema")
+    private JsonNode inputSchema;
 
     @JsonProperty("total_testcases")
     private Integer totalTestcases;

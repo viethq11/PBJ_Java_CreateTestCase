@@ -20,9 +20,9 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class AiIntegrationService {
-    private static final String ANALYSIS_CACHE_PREFIX = "ollama_analysis_v3_schema_contract_";
-    private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v4_no_generator_schema_";
-    private static final String PIPELINE_CACHE_PREFIX = "ollama_gemini_ollama_generator_pipeline_v6_";
+    private static final String ANALYSIS_CACHE_PREFIX = "ollama_analysis_v4_schema_contract_";
+    private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v6_vi_statement_input_output_";
+    private static final String PIPELINE_CACHE_PREFIX = "ollama_gemini_ollama_generator_pipeline_v8_vi_statement_input_output_";
 
     private final AiCacheRepository aiCacheRepository;
     private final AiJobQueueService aiJobQueueService;
@@ -255,6 +255,7 @@ public class AiIntegrationService {
             spec.put("problem_type", dto.getTestPlan() != null ? dto.getTestPlan().getProblemType() : "");
             spec.put("constraints", dto.getConstraints());
             spec.put("input_format", dto.getInputFormat());
+            spec.put("input_schema", dto.getInputSchema());
             spec.put("output_format", dto.getOutputFormat());
             spec.put("analysis_json", analysisJson == null ? "{}" : analysisJson);
             spec.put("test_plan", dto.getTestPlan());

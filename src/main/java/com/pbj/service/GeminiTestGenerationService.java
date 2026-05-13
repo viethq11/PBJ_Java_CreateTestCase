@@ -119,10 +119,13 @@ public class GeminiTestGenerationService {
         return """
                 You are an expert Competitive Programming problem setter and testcase engineer.
                 You will receive the original problem and a short local analysis_json produced by Ollama.
-                Use BOTH. Trust the original problem if there is any conflict.
+                Use BOTH. The original problem is authoritative; analysis_json is only a hint.
+                If analysis_json describes a different task, ignore it completely.
                 First reconstruct the formal problem specification internally. Only then write artifacts from that spec.
                 If a required input/output/constraint/guarantee is not present in the original problem, write "unknown"
                 in the relevant field instead of guessing. The backend will request a repair instead of using guessed artifacts.
+                Do not introduce concepts, input sections, variables, or constraints that are absent from the original problem.
+                Examples of forbidden drift: inventing DAG/A[i]/s,t for a graph-edge problem that only has u,v,W,type.
 
                 Original problem:
                 %s
@@ -134,16 +137,20 @@ public class GeminiTestGenerationService {
                 ABSOLUTE RULE #1 — NEVER GENERATE HUGE RAW TESTCASES
                 NEVER output large arrays, N=100000 raw lines, or manually computed expected outputs.
 
-                ABSOLUTE RULE #2 — SPEC ONLY, NO CODE
+                ABSOLUTE RULE #2 — SPEC FIRST, LIMITED PROBE CODE ONLY
                 Return ONLY normalized formal specification and test planning metadata.
-                Do NOT include source code or pseudo-code in any field.
+                Do NOT include generator, validator, golden-solution, or brute-force source code in this phase.
                 generator_code, golden_solution, validator_code, bruteforce_solution must be empty strings.
+                The only source code allowed is concise executable wrong_solutions[].code probe code.
 
-                ABSOLUTE RULE #3 — ADVERSARIAL TESTING
+                ABSOLUTE RULE #3 — BUG-ORIENTED VALIDATION GATES
+                Do not design tests around a vague quality score. Design them so the backend validation gates can pass:
+                generator pass, validator pass, golden-solution pass, WA probe separation, TLE/complexity probe separation,
+                and required profile coverage.
                 Include named test-family functions that target likely wrong solutions from analysis_json.
                 Include complexity probes that kill brute-force/TLE approaches under max constraints.
                 Use numeric extremes near min/max constraints, e.g. 10^9, -10^9, and 64-bit sums.
-                You are not only generating tests. You are designing tests to kill common wrong submissions.
+                You are not only generating edge cases. You are designing tests to kill common wrong submissions.
                 Explicitly analyze integer overflow, wrong greedy choices, and boundary/off-by-one risks.
 
                 ABSOLUTE RULE #4 — JSON SYNTAX & ESCAPING
@@ -151,8 +158,8 @@ public class GeminiTestGenerationService {
                 Inside string values, represent newlines using literal \\n.
                 Inside string values, escape all double-quotes as \\" and all backslashes as \\\\.
                 Because code is forbidden in this phase:
-                - Do not include *_b64 fields.
-                - Keep wrong_solutions[].code as empty string.
+                - Keep generator_code, golden_solution, validator_code, and bruteforce_solution empty.
+                - wrong_solutions[].code may contain short valid C++17 code that intentionally fails the target bug.
 
                 ABSOLUTE RULE #5 — VIETNAMESE USER-FACING STATEMENT
                 The user-facing problem statement fields MUST be written in Vietnamese:
@@ -255,7 +262,7 @@ public class GeminiTestGenerationService {
                   ],
                   "test_profiles": [
                     {
-                      "name": "edge_boundary",
+                      "name": "BOUNDARY_MIN",
                       "objective": "touch minimum and maximum boundaries safely",
                       "difficulty": "small",
                       "seed_count": 2,
@@ -263,7 +270,7 @@ public class GeminiTestGenerationService {
                       "required": true
                     },
                     {
-                      "name": "overflow_int32",
+                      "name": "OVERFLOW_INT32",
                       "objective": "force accumulated values above 2^31-1 whenever relevant",
                       "difficulty": "large",
                       "seed_count": 2,
@@ -271,7 +278,7 @@ public class GeminiTestGenerationService {
                       "required": true
                     },
                     {
-                      "name": "anti_greedy_small",
+                      "name": "ADVERSARIAL_GREEDY",
                       "objective": "small counterexample that defeats natural greedy choices",
                       "difficulty": "small",
                       "seed_count": 2,
@@ -299,6 +306,8 @@ public class GeminiTestGenerationService {
 
                 test_plan requirements:
                 - Provide enough normalized detail for a separate local C++ generator model.
+                - Ground every field in the original problem. If the original statement says every edge has u, v, W, type,
+                  then input_schema.edges.columns must contain exactly u, v, W, type in that order.
                 - For graph n,m up to 2e5, specify valid indexing, directedness, self-loop/multi-edge policy, edge weights/types, and max sparse traps.
                 - For array/window/sum problems, specify numeric min/max, n max, k-sensitive cases, and values near +/-1e9 when allowed.
                 - Include at least one overflow-related or greedy-related wrong solution whenever such risks plausibly exist.
@@ -322,12 +331,23 @@ public class GeminiTestGenerationService {
                 - Provide at least 3 plausible wrong solutions when feasible: overflow, greedy, boundary/off-by-one.
                 - Each wrong solution must be executable code, not prose.
                 - Keep wrong solutions concise but complete.
-                - Use exact type names from this set whenever relevant: overflow, greedy, boundary, off_by_one, brute_force.
+                - Use exact type names from this set whenever relevant: overflow, greedy, boundary, off_by_one, brute_force, tle.
                 - If bug_classes includes overflow, you must include at least one executable wrong_solution with type="overflow".
                 - If bug_classes includes greedy, you must include at least one executable wrong_solution with type="greedy".
+                - If a slow brute-force approach is plausible, include one executable wrong_solution with type="tle" or "brute_force".
                 - For each executable wrong_solution, set killed_by_profiles to the most likely testcase profiles that should defeat it.
                 test_profiles requirements:
-                - Prefer named profiles such as edge_boundary, overflow_int32, overflow_int64_if_relevant, anti_greedy_small, tie_breaking, random_small, random_large, stress_performance, adversarial_structure.
+                - Use these structured profile names when possible:
+                  SAMPLE, SMALL_EXHAUSTIVE, BOUNDARY_MIN, BOUNDARY_MAX,
+                  RANDOM_SMALL, RANDOM_MEDIUM, RANDOM_LARGE,
+                  OVERFLOW_INT32, OVERFLOW_INT64,
+                  DUPLICATE_VALUES, TIE_BREAKING,
+                  ADVERSARIAL_GREEDY, ADVERSARIAL_SORTING, ADVERSARIAL_GRAPH_STRUCTURE,
+                  STRESS_PERFORMANCE.
+                - Required baseline coverage must be balanced: include small, boundary, medium, random large, adversarial, and stress profiles.
+                - Do not make most profiles near maximum constraints. Only RANDOM_LARGE and STRESS_PERFORMANCE should be near max.
+                - SMALL_EXHAUSTIVE, BOUNDARY_MIN/MAX, ADVERSARIAL_GREEDY, and TIE_BREAKING should stay tiny enough for brute-force reasoning.
+                - Add overflow profiles only when numeric overflow is relevant.
                 Final language check before returning:
                 - formatted_description, input_format, and output_format must not be English prose.
                 - If the original statement is English, translate those three fields to Vietnamese.

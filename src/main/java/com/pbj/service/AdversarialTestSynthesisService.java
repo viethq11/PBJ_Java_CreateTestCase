@@ -78,14 +78,16 @@ public class AdversarialTestSynthesisService {
 
     private Profile mapProfile(String name) {
         if (name == null || name.isBlank()) return null;
-        return switch (name.toLowerCase(Locale.ROOT)) {
-            case "edge_boundary" -> Profile.EDGE_BOUNDARY;
+        String normalized = name.toLowerCase(Locale.ROOT).replace('-', '_').replace(' ', '_');
+        return switch (normalized) {
+            case "sample", "edge_boundary", "boundary_min", "boundary_max" -> Profile.EDGE_BOUNDARY;
+            case "small_exhaustive", "random_small" -> Profile.MAX_ASCENDING;
+            case "random_medium", "random_large" -> Profile.MAX_DESCENDING;
             case "overflow_int32" -> Profile.OVERFLOW_INT32;
             case "overflow_int64", "overflow_int64_if_relevant" -> Profile.OVERFLOW_INT64;
-            case "anti_greedy_small" -> Profile.ANTI_GREEDY_SMALL;
-            case "tie_breaking" -> Profile.TIE_BREAKING;
-            case "adversarial_structure", "random_large" -> Profile.MAX_DESCENDING;
-            case "random_small" -> Profile.MAX_ASCENDING;
+            case "anti_greedy_small", "adversarial_greedy" -> Profile.ANTI_GREEDY_SMALL;
+            case "tie_breaking", "duplicate_values" -> Profile.TIE_BREAKING;
+            case "adversarial_sorting", "adversarial_graph_structure", "adversarial_structure" -> Profile.MAX_DESCENDING;
             case "stress_performance" -> Profile.ALTERNATING_EXTREMES;
             default -> null;
         };

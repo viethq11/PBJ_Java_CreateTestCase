@@ -22,15 +22,16 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class AiIntegrationService {
-    private static final String ANALYSIS_CACHE_PREFIX = "ollama_analysis_v4_schema_contract_";
-    private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v6_vi_statement_input_output_";
-    private static final String PIPELINE_CACHE_PREFIX = "ollama_gemini_ollama_generator_pipeline_v8_vi_statement_input_output_";
+    private static final String ANALYSIS_CACHE_PREFIX = "ollama_analysis_v6_grounded_";
+    private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v8_grounded_profiles_";
+    private static final String PIPELINE_CACHE_PREFIX = "ollama_gemini_ollama_generator_pipeline_v10_grounded_profiles_";
 
     private final AiCacheRepository aiCacheRepository;
     private final AiJobQueueService aiJobQueueService;
     private final OllamaAnalysisService ollamaAnalysisService;
     private final OllamaGeneratorService ollamaGeneratorService;
     private final GeminiTestGenerationService geminiTestGenerationService;
+    private final FormalSpecValidationService formalSpecValidationService;
     private final ObjectMapper objectMapper;
 
     public AiResponseDTO generateTestCases(String problemDescription, List<String> base64Images, int count) {
@@ -75,6 +76,7 @@ public class AiIntegrationService {
             dto = geminiTestGenerationService.generateTestArtifacts(problemText, analysisJson, count);
             saveCache(geminiKey, dto, "gemini-artifacts");
         }
+        formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
 
         String generatorSpecJson = buildGeneratorSpecJson(normalizedProblemText, analysisJson, dto);
         System.out.println("INFO: [AI Pipeline] Step 3 - Ollama local C++ generator...");
@@ -105,6 +107,7 @@ public class AiIntegrationService {
         String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
         String pipelineKey = pipelineCacheKey(sourceFingerprint, count);
         evictCache(pipelineKey, "pipeline");
+        evictCache("problem_text_v2_" + generateHash(sourceFingerprint), "problem-text");
 
         String problemText = resolveProblemTextForCacheEviction(problemDescription, base64Images, sourceFingerprint);
         String normalizedProblemText = normalizeProblemText(problemText);
@@ -115,6 +118,7 @@ public class AiIntegrationService {
                     normalizedProblemText + "|" + cachedAnalysis.get() + "|count=" + count);
             evictCache(geminiKey, "gemini-artifacts");
         }
+        evictCache(analysisKey, "ollama-analysis");
     }
 
     public String repairGenerator(AiResponseDTO dto, String previousGenerator, String validationError) {
@@ -137,7 +141,7 @@ public class AiIntegrationService {
             return problemDescription != null ? problemDescription : "";
         }
 
-        String ocrKey = "problem_text_v1_" + generateHash(sourceFingerprint);
+        String ocrKey = "problem_text_v2_" + generateHash(sourceFingerprint);
         Optional<String> cachedText = readCache(ocrKey, String.class, "problem-text");
         if (cachedText.isPresent()) {
             return cachedText.get();
@@ -158,7 +162,7 @@ public class AiIntegrationService {
             return problemDescription != null ? problemDescription : "";
         }
 
-        String ocrKey = "problem_text_v1_" + generateHash(sourceFingerprint);
+        String ocrKey = "problem_text_v2_" + generateHash(sourceFingerprint);
         Optional<String> cachedText = readCache(ocrKey, String.class, "problem-text-evict-lookup");
         return cachedText.orElse(problemDescription != null ? problemDescription : "");
     }
@@ -294,7 +298,8 @@ public class AiIntegrationService {
                 if (profile == null || profile.getName() == null || profile.getName().isBlank()) continue;
                 String objective = profile.getObjective();
                 String difficulty = profile.getDifficulty();
-                profiles.put(profile.getName(),
+                String runtimeName = normalizeGeneratorProfileName(profile.getName());
+                profiles.put(runtimeName,
                         (objective == null || objective.isBlank() ? "targeted adversarial coverage" : objective)
                                 + (difficulty == null || difficulty.isBlank() ? "" : " [" + difficulty + "]"));
             }
@@ -353,6 +358,28 @@ public class AiIntegrationService {
             case "stress_performance" -> "near-maximum performance traps for slow but correct approaches";
             case "adversarial_structure" -> "structured cases such as monotone, all-equal, alternating, sparse, or chain-like";
             default -> "targeted adversarial coverage";
+        };
+    }
+
+    private String normalizeGeneratorProfileName(String profile) {
+        if (profile == null || profile.isBlank()) return "random_small";
+        String normalized = profile.trim()
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+        return switch (normalized) {
+            case "sample", "boundary_min", "boundary_max" -> "edge_boundary";
+            case "small_exhaustive", "random_small" -> "random_small";
+            case "random_medium" -> "medium";
+            case "random_large" -> "random_large";
+            case "overflow_int32" -> "overflow_int32";
+            case "overflow_int64", "overflow_int64_if_relevant" -> "overflow_int64_if_relevant";
+            case "duplicate_values" -> "tie_breaking";
+            case "tie_breaking" -> "tie_breaking";
+            case "adversarial_greedy" -> "anti_greedy_small";
+            case "adversarial_sorting", "adversarial_graph_structure", "adversarial_structure" -> "adversarial_structure";
+            case "stress_performance" -> "stress_performance";
+            default -> normalized;
         };
     }
 

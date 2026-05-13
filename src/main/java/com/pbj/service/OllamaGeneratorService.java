@@ -87,9 +87,15 @@ public class OllamaGeneratorService {
                    profile_name is usually one of:
                    {"edge_boundary", "overflow_int32", "overflow_int64_if_relevant",
                     "anti_greedy_small", "tie_breaking", "random_small",
-                    "random_large", "stress_performance", "adversarial_structure"}
-                   You may internally map these to small/medium/large/stress buckets, but you must
-                   also make the output shape react to the profile objective when possible.
+                    "medium", "random_large", "stress_performance", "adversarial_structure"}
+                   Profile sizing contract:
+                   - edge_boundary: minimum or single-boundary valid cases, not max-only.
+                   - random_small, anti_greedy_small, tie_breaking: tiny cases suitable for brute-force reasoning.
+                   - medium: moderate cases, far below maximum constraints.
+                   - random_large: large but not always absolute maximum.
+                   - stress_performance: near maximum constraints.
+                   - overflow_*: large values only when numeric overflow is relevant; otherwise generate a valid medium/large case.
+                   You must make the output shape react to the profile objective.
                 2. Output exactly one valid testcase.
                 3. All generated values must satisfy the problem constraints.
                 4. For graph problems:

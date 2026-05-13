@@ -17,7 +17,7 @@ class ProblemServiceQualityTest {
             null, null, null, null, null, null, null, null, null, null, null, null);
 
     @Test
-    void qualityReportScoresKeySignals() {
+    void coverageGateReportCollectsKeySignalsWithoutScoring() {
         AiResponseDTO dto = new AiResponseDTO();
         dto.setWrongSolutions(List.of(
                 probe("overflow_probe", "overflow"),
@@ -33,11 +33,13 @@ class ProblemServiceQualityTest {
         quality.minedProbeKillerCases = 2;
         quality.withKilledBySuite(Set.of("overflow_probe", "greedy_probe", "boundary_probe"));
 
-        ProblemService.QualityReport report = service.buildQualityReport(dto, quality);
+        ProblemService.CoverageGateReport report = service.buildCoverageGateReport(dto, quality);
 
-        assertThat(report.score()).isGreaterThanOrEqualTo(6);
         assertThat(report.signals()).contains(
                 "boundary",
+                "small_or_exhaustive",
+                "large_or_stress",
+                "bug_oriented_adversarial",
                 "bruteforce_verified",
                 "kills_overflow_probe",
                 "kills_greedy_probe",
@@ -47,32 +49,50 @@ class ProblemServiceQualityTest {
     }
 
     @Test
-    void qualityGateRejectsSurvivingOverflowProbe() {
+    void coverageGateRejectsSurvivingOverflowProbe() {
         AiResponseDTO dto = new AiResponseDTO();
         dto.setWrongSolutions(List.of(probe("overflow_probe", "overflow")));
 
         ProblemService.GenerationQualitySummary quality = new ProblemService.GenerationQualitySummary();
         quality.acceptedProfiles.add("edge_boundary");
+        quality.acceptedProfiles.add("random_small");
         quality.acceptedProfiles.add("random_large");
+        quality.acceptedProfiles.add("stress_performance");
         quality.withKilledBySuite(Set.of());
 
-        assertThatThrownBy(() -> service.validateQualityGate(dto, quality))
+        assertThatThrownBy(() -> service.validateCoverageGates(dto, quality))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("overflow probe survived");
     }
 
     @Test
-    void qualityGateAllowsBaselineScoreWhenNoOverflowOrGreedyRisk() {
+    void coverageGateAllowsBaselineProfilesWhenNoOverflowOrGreedyRisk() {
         AiResponseDTO dto = new AiResponseDTO();
 
         ProblemService.GenerationQualitySummary quality = new ProblemService.GenerationQualitySummary();
         quality.acceptedProfiles.add("edge_boundary");
+        quality.acceptedProfiles.add("random_small");
         quality.acceptedProfiles.add("stress_performance");
         quality.hasBruteForceArtifact = true;
         quality.bruteForceVerifiedCases = 2;
         quality.withKilledBySuite(Set.of());
 
-        service.validateQualityGate(dto, quality);
+        service.validateCoverageGates(dto, quality);
+    }
+
+    @Test
+    void coverageGateRejectsMissingAdversarialProfile() {
+        AiResponseDTO dto = new AiResponseDTO();
+
+        ProblemService.GenerationQualitySummary quality = new ProblemService.GenerationQualitySummary();
+        quality.acceptedProfiles.add("edge_boundary");
+        quality.acceptedProfiles.add("random_small");
+        quality.acceptedProfiles.add("random_large");
+        quality.withKilledBySuite(Set.of());
+
+        assertThatThrownBy(() -> service.validateCoverageGates(dto, quality))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("adversarial");
     }
 
     @Test

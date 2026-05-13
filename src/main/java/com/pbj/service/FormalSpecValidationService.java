@@ -4,17 +4,26 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.pbj.dto.AiResponseDTO;
 import org.springframework.stereotype.Service;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
 public class FormalSpecValidationService {
 
     private static final Set<String> SUPPORTED_LINE_KINDS = Set.of(
             "scalars", "array", "matrix", "grid", "edges", "queries", "string", "raw_lines");
+    private static final Pattern DIACRITICS = Pattern.compile("\\p{M}");
+    private static final Set<String> STOP_WORDS = Set.of(
+            "mot", "hai", "ba", "bon", "cac", "cho", "cua", "voi", "trong", "ngoai", "dau",
+            "dong", "tien", "tiep", "theo", "moi", "chua", "so", "nguyen", "duong", "lieu",
+            "vao", "ra", "in", "neu", "thi", "la", "va", "hoac", "tu", "den", "tren", "duoi",
+            "ban", "can", "hay", "duoc", "khong", "co", "gom", "nhat", "gia", "tri", "tim");
 
     public void validateForGeneration(AiResponseDTO dto) {
         List<String> errors = new ArrayList<>();
@@ -44,6 +53,42 @@ public class FormalSpecValidationService {
         if (!errors.isEmpty()) {
             throw new IllegalStateException(
                     "Formal spec validation failed. Repair the problem specification before generating artifacts: "
+                            + String.join(" ", errors));
+        }
+    }
+
+    public void validateAgainstSource(String sourceProblemText, AiResponseDTO dto) {
+        if (sourceProblemText == null || sourceProblemText.isBlank() || dto == null) return;
+
+        List<String> errors = new ArrayList<>();
+        String source = normalizeForComparison(sourceProblemText);
+        String generated = normalizeForComparison(String.join(" ",
+                safe(dto.getFormattedDescription()),
+                safe(dto.getUnderstanding()),
+                safe(dto.getInputFormat()),
+                safe(dto.getOutputFormat()),
+                safe(dto.getConstraints()),
+                dto.getTestPlan() == null ? "" : safe(dto.getTestPlan().getProblemType()),
+                dto.getTestPlan() == null ? "" : safe(dto.getTestPlan().getIntendedSolution())));
+
+        Set<String> sourceTokens = significantTokens(source);
+        Set<String> generatedTokens = significantTokens(generated);
+        if (sourceTokens.size() >= 8 && generatedTokens.size() >= 8) {
+            Set<String> overlap = new HashSet<>(generatedTokens);
+            overlap.retainAll(sourceTokens);
+            double overlapRatio = overlap.size() / (double) generatedTokens.size();
+            if (overlapRatio < 0.22d) {
+                errors.add("generated specification is weakly grounded in the original statement"
+                        + " (token overlap " + Math.round(overlapRatio * 100) + "%).");
+            }
+        }
+
+        validateGraphTupleShape(errors, source, dto.getInputSchema());
+        validatePhantomArrayProblem(errors, source, dto.getInputSchema());
+
+        if (!errors.isEmpty()) {
+            throw new IllegalStateException(
+                    "Formal spec grounding failed. The AI response appears to describe a different problem: "
                             + String.join(" ", errors));
         }
     }
@@ -85,6 +130,48 @@ public class FormalSpecValidationService {
                 validateTupleColumns(errors, line.path("columns"), i, definedScalars);
             } else if ("string".equals(kind)) {
                 validateLengthReference(errors, line.path("length"), definedScalars, "input_schema.lines[" + i + "].length");
+            }
+        }
+    }
+
+    private void validateGraphTupleShape(List<String> errors, String normalizedSource, JsonNode schema) {
+        if (schema == null || schema.isMissingNode() || schema.isNull()) return;
+        JsonNode lines = schema.path("lines");
+        if (!lines.isArray()) return;
+
+        boolean sourceMentionsFourEdgeColumns = normalizedSource.contains("4 so")
+                || normalizedSource.contains("bon so")
+                || normalizedSource.contains("u v w type")
+                || normalizedSource.contains("u v trong so type")
+                || (normalizedSource.contains("type") && normalizedSource.contains("w"));
+        if (!sourceMentionsFourEdgeColumns) return;
+
+        for (JsonNode line : lines) {
+            String kind = line.path("kind").asText("").toLowerCase(Locale.ROOT);
+            if (!"edges".equals(kind)) continue;
+            int columnCount = line.path("columns").isArray() ? line.path("columns").size() : 0;
+            if (columnCount != 4) {
+                errors.add("source statement describes 4 values per edge, but input_schema edge tuple has "
+                        + columnCount + " columns.");
+            }
+        }
+    }
+
+    private void validatePhantomArrayProblem(List<String> errors, String normalizedSource, JsonNode schema) {
+        if (schema == null || schema.isMissingNode() || schema.isNull()) return;
+        if (normalizedSource.contains("a[i]") || normalizedSource.contains("a i")
+                || normalizedSource.contains("mang a") || normalizedSource.contains("day a")) {
+            return;
+        }
+
+        JsonNode lines = schema.path("lines");
+        if (!lines.isArray()) return;
+        for (JsonNode line : lines) {
+            String kind = line.path("kind").asText("").toLowerCase(Locale.ROOT);
+            String name = line.path("name").asText("").toLowerCase(Locale.ROOT);
+            if ("array".equals(kind) && "a".equals(name)) {
+                errors.add("input_schema introduces array A even though the source statement does not.");
+                return;
             }
         }
     }
@@ -190,5 +277,34 @@ public class FormalSpecValidationService {
 
     private boolean isIdentifier(String value) {
         return value != null && value.matches("[A-Za-z_][A-Za-z0-9_]*");
+    }
+
+    private String normalizeForComparison(String input) {
+        if (input == null) return "";
+        String decomposed = Normalizer.normalize(input, Normalizer.Form.NFD);
+        return DIACRITICS.matcher(decomposed)
+                .replaceAll("")
+                .replace('Đ', 'D')
+                .replace('đ', 'd')
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9_\\[\\] ]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private Set<String> significantTokens(String text) {
+        Set<String> tokens = new LinkedHashSet<>();
+        if (text == null || text.isBlank()) return tokens;
+        for (String token : text.split("\\s+")) {
+            if (token.length() < 3) continue;
+            if (token.matches("\\d+")) continue;
+            if (STOP_WORDS.contains(token)) continue;
+            tokens.add(token);
+        }
+        return tokens;
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 }

@@ -67,6 +67,8 @@ public class OllamaAnalysisService {
                   "constraints": "all numeric and structural constraints",
                   "algorithm_type": "likely intended algorithm family",
                   "intended_complexity": "expected time and memory complexity",
+                  "likely_wrong_solutions": ["greedy local optimum, off-by-one, int overflow, assumes connected graph, etc."],
+                  "required_profiles": ["SMALL_EXHAUSTIVE, BOUNDARY_MIN, RANDOM_LARGE, ADVERSARIAL_GREEDY, STRESS_PERFORMANCE, etc."],
                   "edge_risks": ["boundary, overflow, disconnected, duplicates, etc."],
                   "slow_wrong_approaches": ["brute force or TLE approaches likely to pass weak tests"]
                 }

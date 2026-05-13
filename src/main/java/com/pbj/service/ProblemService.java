@@ -57,32 +57,32 @@ public class ProblemService {
     private static final String[][] GENERATOR_RUNS = {
         {"edge_boundary", "1"},
         {"edge_boundary", "2"},
-        {"random_small", "3"},
+        {"edge_boundary", "3"},
         {"random_small", "4"},
-        {"anti_greedy_small", "5"},
-        {"anti_greedy_small", "6"},
-        {"tie_breaking", "7"},
-        {"tie_breaking", "8"},
-        {"overflow_int32", "9"},
-        {"overflow_int32", "10"},
-        {"random_large", "11"},
-        {"random_large", "12"},
-        {"random_large", "13"},
-        {"adversarial_structure", "14"},
-        {"adversarial_structure", "15"},
-        {"stress_performance", "16"},
-        {"stress_performance", "17"},
-        {"stress_performance", "18"},
-        {"stress_performance", "19"},
-        {"stress_performance", "20"},
-        {"stress_performance", "21"},
-        {"stress_performance", "22"},
-        {"stress_performance", "23"},
-        {"stress_performance", "24"},
+        {"random_small", "5"},
+        {"random_small", "6"},
+        {"random_small", "7"},
+        {"random_small", "8"},
+        {"anti_greedy_small", "9"},
+        {"anti_greedy_small", "10"},
+        {"tie_breaking", "11"},
+        {"tie_breaking", "12"},
+        {"medium", "13"},
+        {"medium", "14"},
+        {"medium", "15"},
+        {"medium", "16"},
+        {"random_large", "17"},
+        {"random_large", "18"},
+        {"random_large", "19"},
+        {"adversarial_structure", "20"},
+        {"adversarial_structure", "21"},
+        {"adversarial_structure", "22"},
+        {"overflow_int32", "23"},
+        {"overflow_int32", "24"},
         {"overflow_int64_if_relevant", "25"},
         {"overflow_int64_if_relevant", "26"},
-        {"random_large", "27"},
-        {"adversarial_structure", "28"},
+        {"stress_performance", "27"},
+        {"stress_performance", "28"},
         {"stress_performance", "29"},
         {"stress_performance", "30"},
     };
@@ -243,6 +243,7 @@ public class ProblemService {
             ensureLocalArtifacts(dto);
             dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
             formalSpecValidationService.validateForGeneration(dto);
+            formalSpecValidationService.validateAgainstSource(description, dto);
 
             p = buildProblem(title, description, dto);
             p = problemRepository.save(p);
@@ -285,6 +286,7 @@ public class ProblemService {
         ensureLocalArtifacts(dto);
         dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
         formalSpecValidationService.validateForGeneration(dto);
+        formalSpecValidationService.validateAgainstSource(problem.getDescription(), dto);
 
         if (dto.getConstraints() != null && !dto.getConstraints().isBlank()) {
             updateProblemMetadata(problem, dto);
@@ -758,8 +760,8 @@ public class ProblemService {
         try {
             validateVerdictSeparation(problem, finalCases, goldenCode);
             Set<String> killedBySuite = validateWrongSolutionCoverage(problem, finalCases, dto);
-            validateQualityGate(dto, outcome.quality.withKilledBySuite(killedBySuite));
-            System.out.println("SUCCESS: Verdict separation checks passed.");
+            validateCoverageGates(dto, outcome.quality.withKilledBySuite(killedBySuite));
+            System.out.println("SUCCESS: Validation gates passed.");
         } catch (IllegalStateException validationEx) {
             System.err.println("WARNING: Verdict separation check failed: " + validationEx.getMessage());
             testCaseStorageService.deleteAllForProblem(problemId);
@@ -805,8 +807,8 @@ public class ProblemService {
                         problem.getTimeLimit(), problem.getCheckerCode(), null);
                 if (slowResult != null && slowResult.status == CodeExecutionService.RunResult.AC) {
                     System.err.println(
-                            "WARNING: AI-generated slow correct probe still gets AC. " +
-                            "Continuing with the remaining quality gates.");
+                            "WARNING: AI-generated slow/TLE probe still gets AC. " +
+                            "Keeping testcase set because runtime TLE sanity and WA probe gates passed.");
                 }
             }
         } catch (IllegalStateException e) {
@@ -840,12 +842,21 @@ public class ProblemService {
         return killed;
     }
 
-    void validateQualityGate(AiResponseDTO dto, GenerationQualitySummary quality) {
-        QualityReport report = buildQualityReport(dto, quality);
-        System.out.println("INFO: Test suite quality score=" + report.score + " signals=" + report.signals);
+    void validateCoverageGates(AiResponseDTO dto, GenerationQualitySummary quality) {
+        CoverageGateReport report = buildCoverageGateReport(dto, quality);
+        System.out.println("INFO: Test suite coverage gates=" + report.signals);
 
         if (!report.hasBoundaryCoverage) {
             throw new IllegalStateException("Weak tests: missing boundary-oriented coverage.");
+        }
+        if (!report.hasSmallCoverage) {
+            throw new IllegalStateException("Weak tests: missing small/exhaustive profile coverage.");
+        }
+        if (!report.hasLargeOrStressCoverage) {
+            throw new IllegalStateException("Weak tests: missing large/stress profile coverage.");
+        }
+        if (!report.hasAdversarialCoverage) {
+            throw new IllegalStateException("Weak tests: missing adversarial or bug-oriented profile coverage.");
         }
         if (report.hasBruteForceArtifact && !report.hasBruteForceVerification) {
             throw new IllegalStateException("Weak tests: brute-force artifact exists but no small-case cross-check succeeded.");
@@ -862,83 +873,85 @@ public class ProblemService {
         if (report.hasGreedyRisk && !report.hasGreedyProbe && !report.hasGreedyProfileCoverage) {
             throw new IllegalStateException("Weak tests: greedy risk detected but there is no anti-greedy/tie-breaking coverage.");
         }
-        if (report.score < report.requiredMinScore) {
-            throw new IllegalStateException("Weak tests: quality score too low (" + report.score + "). Required="
-                    + report.requiredMinScore + ". Signals=" + report.signals);
-        }
     }
 
-    QualityReport buildQualityReport(AiResponseDTO dto, GenerationQualitySummary quality) {
+    CoverageGateReport buildCoverageGateReport(AiResponseDTO dto, GenerationQualitySummary quality) {
         LinkedHashSet<String> signals = new LinkedHashSet<>();
-        int score = 0;
         boolean hasOverflowRisk = hasBugClass(dto, "overflow") || hasProbeType(dto, "overflow");
         boolean hasGreedyRisk = hasBugClass(dto, "greedy") || hasProbeType(dto, "greedy");
 
-        boolean hasBoundaryCoverage = containsProfileToken(quality.acceptedProfiles, "boundary", "tie");
+        boolean hasBoundaryCoverage = containsProfileToken(quality.acceptedProfiles, "boundary", "edge", "tie");
         if (hasBoundaryCoverage) {
-            score++;
             signals.add("boundary");
+        }
+
+        boolean hasSmallCoverage = containsProfileToken(quality.acceptedProfiles, "small", "exhaustive")
+                || quality.bruteForceVerifiedCases > 0;
+        if (hasSmallCoverage) {
+            signals.add("small_or_exhaustive");
+        }
+
+        boolean hasLargeOrStressCoverage = containsProfileToken(quality.acceptedProfiles, "large", "stress", "max");
+        if (hasLargeOrStressCoverage) {
+            signals.add("large_or_stress");
+        }
+
+        boolean hasAdversarialCoverage = containsProfileToken(
+                quality.acceptedProfiles, "adversarial", "greedy", "tie", "overflow", "stress")
+                || quality.minedProbeKillerCases > 0
+                || quality.deterministicAdversarialCases > 0;
+        if (hasAdversarialCoverage) {
+            signals.add("bug_oriented_adversarial");
         }
 
         boolean hasBruteForceVerification = quality.bruteForceVerifiedCases > 0;
         if (hasBruteForceVerification) {
-            score++;
             signals.add("bruteforce_verified");
         }
 
         boolean hasOverflowProfileCoverage = containsProfileToken(
                 quality.acceptedProfiles, "overflow", "int32", "int64");
         if (hasOverflowRisk && hasOverflowProfileCoverage) {
-            score++;
             signals.add("overflow_profile");
         }
 
         boolean killsOverflowProbe = killsProbeType(dto, quality.killedBySuite, "overflow");
         if (killsOverflowProbe) {
-            score++;
             signals.add("kills_overflow_probe");
         }
 
         boolean hasGreedyProfileCoverage = containsProfileToken(
                 quality.acceptedProfiles, "greedy", "tie");
         if (hasGreedyRisk && hasGreedyProfileCoverage) {
-            score++;
             signals.add("greedy_profile");
         }
 
         boolean killsGreedyProbe = killsProbeType(dto, quality.killedBySuite, "greedy");
         if (killsGreedyProbe) {
-            score++;
             signals.add("kills_greedy_probe");
         }
 
         boolean killsBoundaryProbe = killsProbeType(dto, quality.killedBySuite, "boundary", "off_by_one");
         if (killsBoundaryProbe) {
-            score++;
             signals.add("kills_boundary_probe");
         }
 
         if (containsProfileToken(quality.acceptedProfiles, "stress", "large", "overflow")) {
-            score++;
             signals.add("max_or_stress");
         }
 
         if (quality.minedProbeKillerCases > 0) {
-            score++;
             signals.add("mined_probe_killers");
         }
 
-        int requiredMinScore = 3;
-        if (hasOverflowRisk) requiredMinScore++;
-        if (hasGreedyRisk) requiredMinScore++;
-
-        return new QualityReport(
-                score,
+        return new CoverageGateReport(
                 signals,
-                requiredMinScore,
                 quality.hasBruteForceArtifact,
                 hasBruteForceVerification,
                 hasBoundaryCoverage,
+                hasSmallCoverage,
+                hasLargeOrStressCoverage,
+                hasAdversarialCoverage,
                 hasOverflowRisk,
                 hasProbeType(dto, "overflow"),
                 hasOverflowProfileCoverage,
@@ -958,7 +971,7 @@ public class ProblemService {
         if (dto != null && dto.getTestProfiles() != null) {
             for (AiResponseDTO.TestProfile profile : dto.getTestProfiles()) {
                 if (profile == null || profile.getName() == null || profile.getName().isBlank()) continue;
-                String name = profile.getName().trim();
+                String name = normalizeGeneratorProfileName(profile.getName());
                 String lower = name.toLowerCase(Locale.ROOT);
                 if (!isMiningProfile(dto, lower)) continue;
                 int attempts = Math.max(8, Math.min(30, (profile.getSeedCount() == null ? 2 : profile.getSeedCount()) * 6));
@@ -970,7 +983,8 @@ public class ProblemService {
             if (probe.getKilledByProfiles() == null) continue;
             for (String profile : probe.getKilledByProfiles()) {
                 if (profile == null || profile.isBlank()) continue;
-                profiles.putIfAbsent(profile.trim(), defaultAttemptsForProfile(profile));
+                String normalized = normalizeGeneratorProfileName(profile);
+                profiles.putIfAbsent(normalized, defaultAttemptsForProfile(normalized));
             }
         }
 
@@ -1014,6 +1028,28 @@ public class ProblemService {
         if (lower.contains("greedy") || lower.contains("tie")) return 14;
         if (lower.contains("boundary")) return 8;
         return 12;
+    }
+
+    private String normalizeGeneratorProfileName(String profile) {
+        if (profile == null || profile.isBlank()) return "random_small";
+        String normalized = profile.trim()
+                .toLowerCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+        return switch (normalized) {
+            case "sample", "boundary_min", "boundary_max" -> "edge_boundary";
+            case "small_exhaustive", "random_small" -> "random_small";
+            case "random_medium" -> "medium";
+            case "random_large" -> "random_large";
+            case "overflow_int32" -> "overflow_int32";
+            case "overflow_int64", "overflow_int64_if_relevant" -> "overflow_int64_if_relevant";
+            case "duplicate_values" -> "tie_breaking";
+            case "tie_breaking" -> "tie_breaking";
+            case "adversarial_greedy" -> "anti_greedy_small";
+            case "adversarial_sorting", "adversarial_graph_structure", "adversarial_structure" -> "adversarial_structure";
+            case "stress_performance" -> "stress_performance";
+            default -> normalized;
+        };
     }
 
     private boolean isBruteForceFriendlyProfile(String profile) {
@@ -1127,18 +1163,19 @@ public class ProblemService {
         }
     }
 
-    record QualityReport(int score,
-                         Set<String> signals,
-                         int requiredMinScore,
-                         boolean hasBruteForceArtifact,
-                         boolean hasBruteForceVerification,
-                         boolean hasBoundaryCoverage,
-                         boolean hasOverflowRisk,
-                         boolean hasOverflowProbe,
-                         boolean hasOverflowProfileCoverage,
-                         boolean killsOverflowProbe,
-                         boolean hasGreedyRisk,
-                         boolean hasGreedyProbe,
-                         boolean hasGreedyProfileCoverage,
-                         boolean killsGreedyProbe) {}
+    record CoverageGateReport(Set<String> signals,
+                              boolean hasBruteForceArtifact,
+                              boolean hasBruteForceVerification,
+                              boolean hasBoundaryCoverage,
+                              boolean hasSmallCoverage,
+                              boolean hasLargeOrStressCoverage,
+                              boolean hasAdversarialCoverage,
+                              boolean hasOverflowRisk,
+                              boolean hasOverflowProbe,
+                              boolean hasOverflowProfileCoverage,
+                              boolean killsOverflowProbe,
+                              boolean hasGreedyRisk,
+                              boolean hasGreedyProbe,
+                              boolean hasGreedyProfileCoverage,
+                              boolean killsGreedyProbe) {}
 }

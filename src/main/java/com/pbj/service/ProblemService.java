@@ -35,6 +35,7 @@ public class ProblemService {
     private final JobQueueService jobQueueService;
     private final TestCaseStorageService testCaseStorageService;
     private final FallbackGeneratorFactory fallbackGeneratorFactory;
+    private final FormalSpecValidationService formalSpecValidationService;
     private final ObjectMapper objectMapper;
 
     @Value("${ai.debug-dir:/app/ai-debug}")
@@ -232,6 +233,7 @@ public class ProblemService {
 
         try {
             AiResponseDTO dto = aiIntegrationService.generateTestCases(description, base64Images, GENERATOR_RUNS.length);
+            formalSpecValidationService.validateForGeneration(dto);
 
             p = buildProblem(title, description, dto);
             p = problemRepository.save(p);
@@ -271,6 +273,7 @@ public class ProblemService {
 
         AiResponseDTO dto = aiIntegrationService.generateTestCases(
                 problem.getDescription(), new ArrayList<>(), GENERATOR_RUNS.length, false);
+        formalSpecValidationService.validateForGeneration(dto);
 
         if (dto.getConstraints() != null && !dto.getConstraints().isBlank()) {
             updateProblemMetadata(problem, dto);

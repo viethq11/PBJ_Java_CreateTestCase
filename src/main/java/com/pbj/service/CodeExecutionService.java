@@ -331,8 +331,15 @@ public class CodeExecutionService {
 
             if (process.exitValue() != 0) {
                 String message = readStream(process.getErrorStream());
+                String stdout = readStream(process.getInputStream());
+                if (message.isBlank() && !stdout.isBlank()) {
+                    message = stdout;
+                }
                 System.err.println("DEBUG: Validator rejected input: " + message);
-                return new ValidatorResult(false, message.isBlank() ? "Validator rejected input." : message);
+                return new ValidatorResult(false,
+                        message.isBlank()
+                                ? "Validator rejected input with exit code " + process.exitValue() + " and no output."
+                                : message);
             }
             return new ValidatorResult(true, "OK");
         } catch (Exception e) {

@@ -113,6 +113,9 @@ public class GeminiTestGenerationService {
                 You are an expert Competitive Programming problem setter and testcase engineer.
                 You will receive the original problem and a short local analysis_json produced by Ollama.
                 Use BOTH. Trust the original problem if there is any conflict.
+                First reconstruct the formal problem specification internally. Only then write artifacts from that spec.
+                If a required input/output/constraint/guarantee is not present in the original problem, write "unknown"
+                in the relevant field instead of guessing. The backend will request a repair instead of using guessed artifacts.
 
                 Original problem:
                 %s
@@ -236,7 +239,8 @@ public class GeminiTestGenerationService {
                 - For each scalar/array/matrix value include numeric min/max when known.
                 - Use length references such as "N", "M", "Q", "N-1" only when that scalar appears earlier.
                 - For graph-like data include node indexing, directedness, self-loop policy, multi-edge policy, and every column.
-                - If the statement is complex, still provide the safest broad schema that always generates valid input.
+                - If the statement is complex but specified, provide the safest broad schema that always generates valid input.
+                - If the statement is missing required format/constraint facts, mark them as "unknown"; do not invent them.
                 
                 edge_cases: at most 3 tiny manually written cases. No huge raw data.
                 checker_code: empty string for unique-output problems.

@@ -17,6 +17,7 @@ public class FallbackGeneratorFactory {
         String input = normalized(dto == null ? null : dto.getInputFormat());
         String constraints = normalized(dto == null ? null : dto.getConstraints());
         String combined = input + "\n" + constraints;
+        long maxCount = maxCount(combined);
 
         List<String> candidates = new ArrayList<>();
         String schemaCandidate = schemaDrivenGenerator(dto == null ? null : dto.getInputSchema());
@@ -25,26 +26,28 @@ public class FallbackGeneratorFactory {
         }
 
         if (looksLikeTwoHeaderWithDPArrays(input)) {
-            candidates.add(twoHeaderTwoArraysGenerator(maxValue(combined)));
+            candidates.add(twoHeaderTwoArraysGenerator(maxValue(combined), maxCount));
         }
         if (looksLikeTwoHeaderWithArrays(input)) {
-            candidates.add(twoHeaderTwoArraysGenerator(maxValue(combined)));
+            candidates.add(twoHeaderTwoArraysGenerator(maxValue(combined), maxCount));
         }
         if (looksLikeGraph(input)) {
-            candidates.add(graphGenerator(edgeColumns(input), hasBinaryEdgeType(input), hasWeights(input)));
+            candidates.add(graphGenerator(edgeColumns(input), hasBinaryEdgeType(input), hasWeights(input), maxCount));
         }
         if (looksLikeTree(input)) {
-            candidates.add(treeGenerator());
+            candidates.add(treeGenerator(maxCount));
         }
         if (looksLikeArrayWithK(input)) {
-            candidates.add(arrayWithKGenerator(maxValue(combined)));
+            candidates.add(arrayWithKGenerator(maxValue(combined), maxCount));
         }
         if (looksLikeArray(input)) {
-            candidates.add(arrayOnlyGenerator(maxValue(combined)));
+            candidates.add(arrayOnlyGenerator(maxValue(combined), maxCount));
         }
 
-        candidates.add(arrayOnlyGenerator(1_000_000_000));
-        candidates.add(graphGenerator(2, false, false));
+        if (candidates.isEmpty()) {
+            candidates.add(arrayOnlyGenerator(1_000_000_000, 200_000L));
+            candidates.add(graphGenerator(2, false, false, 200_000L));
+        }
         return candidates;
     }
 
@@ -64,8 +67,10 @@ public class FallbackGeneratorFactory {
                 if (appendScalarLine(body, line, edgeLengthRefs)) supportedAnyLine = true;
             } else if ("array".equals(kind)) {
                 if (appendArrayLine(body, line)) supportedAnyLine = true;
-            } else if ("matrix".equals(kind) || "grid".equals(kind)) {
+            } else if ("matrix".equals(kind)) {
                 if (appendMatrixLine(body, line)) supportedAnyLine = true;
+            } else if ("grid".equals(kind)) {
+                if (appendGridLine(body, line)) supportedAnyLine = true;
             } else if ("edges".equals(kind) || "queries".equals(kind)) {
                 if (appendTupleLine(body, line)) supportedAnyLine = true;
             } else if ("string".equals(kind)) {
@@ -213,6 +218,27 @@ public class FallbackGeneratorFactory {
         return true;
     }
 
+    private boolean appendGridLine(StringBuilder body, JsonNode line) {
+        String rows = lengthExpression(firstPresent(line, "rows", "height", "n"), 5L);
+        String cols = lengthExpression(firstPresent(line, "cols", "columns", "width", "m"), 5L);
+        String alphabet = gridAlphabet(line);
+
+        body.append("{\n");
+        body.append("    string alphabet = \"").append(alphabet).append("\";\n");
+        body.append("    long long rows = clampValue(").append(rows).append(", 1LL, 2000LL);\n");
+        body.append("    long long cols = clampValue(").append(cols).append(", 1LL, 2000LL);\n");
+        body.append("    for (long long r = 0; r < rows; r++) {\n");
+        body.append("        for (long long c = 0; c < cols; c++) {\n");
+        body.append("            size_t idx = (rng() + r * 131 + c * 17) % alphabet.size();\n");
+        body.append("            if (size == \"stress\" && alphabet.size() > 1 && (r + c) % 7 == 0) idx = alphabet.size() - 1;\n");
+        body.append("            cout << alphabet[idx];\n");
+        body.append("        }\n");
+        body.append("        cout << \"\\n\";\n");
+        body.append("    }\n");
+        body.append("}\n");
+        return true;
+    }
+
     private boolean appendTupleLine(StringBuilder body, JsonNode line) {
         JsonNode columns = line.path("columns");
         if (!columns.isArray() || columns.isEmpty()) return false;
@@ -277,9 +303,7 @@ public class FallbackGeneratorFactory {
 
     private boolean appendStringLine(StringBuilder body, JsonNode line) {
         String lengthExpr = lengthExpression(line.path("length"), 5L);
-        String alphabet = line.path("alphabet").asText("abc");
-        alphabet = alphabet.replace("\\", "").replace("\"", "");
-        if (alphabet.isBlank()) alphabet = "abc";
+        String alphabet = gridAlphabet(line);
 
         body.append("{\n");
         body.append("    string alphabet = \"").append(alphabet).append("\";\n");
@@ -288,6 +312,34 @@ public class FallbackGeneratorFactory {
         body.append("    cout << \"\\n\";\n");
         body.append("}\n");
         return true;
+    }
+
+    private String gridAlphabet(JsonNode line) {
+        String alphabet = firstText(line, "alphabet", "chars", "symbols", "domain");
+        String normalized = alphabet.toLowerCase(Locale.ROOT).replace(" ", "");
+        if (alphabet.isBlank()) {
+            alphabet = "01";
+        } else if (normalized.contains("0") && normalized.contains("1") && !normalized.matches(".*[2-9].*")) {
+            alphabet = "01";
+        } else if (alphabet.contains("#") || alphabet.contains(".")) {
+            alphabet = ".#";
+        } else if (normalized.contains("lowercase") || normalized.contains("letter")) {
+            alphabet = "abc";
+        }
+        alphabet = alphabet.replace("\\", "").replace("\"", "");
+        if (alphabet.isBlank()) alphabet = "01";
+        return alphabet;
+    }
+
+    private String firstText(JsonNode node, String... names) {
+        for (String name : names) {
+            JsonNode candidate = node.path(name);
+            if (!candidate.isMissingNode() && !candidate.isNull()) {
+                String value = candidate.asText("").trim();
+                if (!value.isBlank()) return value;
+            }
+        }
+        return "";
     }
 
     private JsonNode firstPresent(JsonNode node, String... names) {
@@ -365,9 +417,7 @@ public class FallbackGeneratorFactory {
         return input.contains(" u ") && input.contains(" v ")
                 || input.contains("u v")
                 || input.contains("edge")
-                || input.contains("canh")
-                || input.contains("m dong")
-                || input.contains("m lines");
+                || input.contains("canh");
     }
 
     private boolean looksLikeTree(String input) {
@@ -379,15 +429,24 @@ public class FallbackGeneratorFactory {
     }
 
     private boolean looksLikeTwoHeaderWithDPArrays(String input) {
-        return (input.contains(" n m ") || input.contains("n m") || input.contains("n, m"))
+        return looksLikeTwoScalarHeader(input)
                 && (input.contains(" d ") || input.contains("d[") || input.contains("d_i"))
                 && (input.contains(" p ") || input.contains("p[") || input.contains("p_i"));
     }
 
     private boolean looksLikeTwoHeaderWithArrays(String input) {
-        return (input.contains(" n m ") || input.contains("n m") || input.contains("n, m"))
+        return looksLikeTwoScalarHeader(input)
                 && looksLikeArray(input)
                 && !looksLikeGraph(input);
+    }
+
+    private boolean looksLikeTwoScalarHeader(String input) {
+        return input.contains(" n m ")
+                || input.contains("n m")
+                || input.contains("n, m")
+                || input.contains(" n va m ")
+                || input.contains(" n và m ")
+                || input.contains(" n and m ");
     }
 
     private boolean looksLikeArray(String input) {
@@ -426,6 +485,12 @@ public class FallbackGeneratorFactory {
         return 100_000L;
     }
 
+    private long maxCount(String text) {
+        if (text.contains("2*10^5") || text.contains("2e5") || text.contains("200000")) return 200_000L;
+        if (text.contains("10^5") || text.contains("1e5") || text.contains("100000")) return 100_000L;
+        return 200_000L;
+    }
+
     private String normalized(String text) {
         if (text == null) return "";
         return " " + text.toLowerCase(Locale.ROOT)
@@ -436,7 +501,7 @@ public class FallbackGeneratorFactory {
                 .trim() + " ";
     }
 
-    private String arrayOnlyGenerator(long maxValue) {
+    private String arrayOnlyGenerator(long maxValue, long maxCount) {
         return """
                 #include <bits/stdc++.h>
                 using namespace std;
@@ -444,10 +509,11 @@ public class FallbackGeneratorFactory {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
                     string size = argc > 2 ? argv[2] : "small";
                     mt19937 rng(seed);
-                    int n = 5;
-                    if (size == "medium") n = 1000;
-                    else if (size == "large") n = 100000;
-                    else if (size == "stress") n = 200000;
+                    int limit = %d;
+                    int n = min(5, limit);
+                    if (size == "medium") n = min(1000, limit);
+                    else if (size == "large") n = min(100000, limit);
+                    else if (size == "stress") n = limit;
                     long long hi = %dLL;
                     cout << n << "\\n";
                     for (int i = 0; i < n; i++) {
@@ -460,10 +526,10 @@ public class FallbackGeneratorFactory {
                     cout << "\\n";
                     return 0;
                 }
-                """.formatted(maxValue);
+                """.formatted(maxCount, maxValue);
     }
 
-    private String arrayWithKGenerator(long maxValue) {
+    private String arrayWithKGenerator(long maxValue, long maxCount) {
         return """
                 #include <bits/stdc++.h>
                 using namespace std;
@@ -471,10 +537,11 @@ public class FallbackGeneratorFactory {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
                     string size = argc > 2 ? argv[2] : "small";
                     mt19937 rng(seed);
-                    int n = 5;
-                    if (size == "medium") n = 1000;
-                    else if (size == "large") n = 100000;
-                    else if (size == "stress") n = 200000;
+                    int limit = %d;
+                    int n = min(5, limit);
+                    if (size == "medium") n = min(1000, limit);
+                    else if (size == "large") n = min(100000, limit);
+                    else if (size == "stress") n = limit;
                     int k = max(1, min(n, size == "small" ? 2 : n / 2));
                     long long hi = %dLL;
                     cout << n << ' ' << k << "\\n";
@@ -486,10 +553,10 @@ public class FallbackGeneratorFactory {
                     cout << "\\n";
                     return 0;
                 }
-                """.formatted(maxValue);
+                """.formatted(maxCount, maxValue);
     }
 
-    private String twoHeaderTwoArraysGenerator(long maxValue) {
+    private String twoHeaderTwoArraysGenerator(long maxValue, long maxCount) {
         return """
                 #include <bits/stdc++.h>
                 using namespace std;
@@ -497,11 +564,13 @@ public class FallbackGeneratorFactory {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
                     string size = argc > 2 ? argv[2] : "small";
                     mt19937 rng(seed);
-                    int n = 5;
-                    if (size == "medium") n = 1000;
-                    else if (size == "large") n = 100000;
-                    else if (size == "stress") n = 200000;
-                    int m = max(1, min(200000, n + (seed %% max(1, n))));
+                    int limit = %d;
+                    int n = min(5, limit);
+                    if (size == "medium") n = min(1000, limit);
+                    else if (size == "large") n = min(100000, limit);
+                    else if (size == "stress") n = limit;
+                    int m = n;
+                    if (size != "stress") m = max(1, min(limit, n + (seed %% max(1, n))));
                     long long hi = %dLL;
                     cout << n << ' ' << m << "\\n";
                     for (int i = 0; i < n; i++) {
@@ -518,10 +587,10 @@ public class FallbackGeneratorFactory {
                     cout << "\\n";
                     return 0;
                 }
-                """.formatted(maxValue);
+                """.formatted(maxCount, maxValue);
     }
 
-    private String treeGenerator() {
+    private String treeGenerator(long maxCount) {
         return """
                 #include <bits/stdc++.h>
                 using namespace std;
@@ -529,10 +598,11 @@ public class FallbackGeneratorFactory {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
                     string size = argc > 2 ? argv[2] : "small";
                     mt19937 rng(seed);
-                    int n = 5;
-                    if (size == "medium") n = 1000;
-                    else if (size == "large") n = 100000;
-                    else if (size == "stress") n = 200000;
+                    int limit = %d;
+                    int n = min(5, limit);
+                    if (size == "medium") n = min(1000, limit);
+                    else if (size == "large") n = min(100000, limit);
+                    else if (size == "stress") n = limit;
                     cout << n << "\\n";
                     for (int i = 2; i <= n; i++) {
                         int parent;
@@ -543,10 +613,10 @@ public class FallbackGeneratorFactory {
                     }
                     return 0;
                 }
-                """;
+                """.formatted(maxCount);
     }
 
-    private String graphGenerator(int columns, boolean binaryType, boolean weighted) {
+    private String graphGenerator(int columns, boolean binaryType, boolean weighted, long maxCount) {
         String thirdValue = binaryType ? "(i % 2)" : (weighted ? "(1 + (int)(rng() % 1000000000))" : "1");
         return """
                 #include <bits/stdc++.h>
@@ -555,11 +625,12 @@ public class FallbackGeneratorFactory {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
                     string size = argc > 2 ? argv[2] : "small";
                     mt19937 rng(seed);
-                    int n = 5;
-                    if (size == "medium") n = 1000;
-                    else if (size == "large") n = 100000;
-                    else if (size == "stress") n = 200000;
-                    int m = min(n - 1, 200000);
+                    int limit = %d;
+                    int n = min(5, limit);
+                    if (size == "medium") n = min(1000, limit);
+                    else if (size == "large") n = min(100000, limit);
+                    else if (size == "stress") n = limit;
+                    int m = min(n - 1, limit);
                     int shift = seed %% n;
                     cout << n << ' ' << m << "\\n";
                     for (int i = 1; i <= m; i++) {
@@ -570,6 +641,6 @@ public class FallbackGeneratorFactory {
                     }
                     return 0;
                 }
-                """.formatted(columns, thirdValue);
+                """.formatted(maxCount, columns, thirdValue);
     }
 }

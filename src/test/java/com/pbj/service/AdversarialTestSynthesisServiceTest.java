@@ -95,4 +95,52 @@ class AdversarialTestSynthesisServiceTest {
         assertThat(cases.get(1).lines().toList().get(0)).isEqualTo("6");
         assertThat(cases.get(1).lines().toList().get(1).split(" ")).hasSize(6);
     }
+
+    @Test
+    void overflowProfileBiasesTowardRepeatedExtremes() throws Exception {
+        AiResponseDTO dto = new AiResponseDTO();
+        dto.setInputSchema(objectMapper.readTree("""
+                {
+                  "multiple_test_cases": false,
+                  "lines": [
+                    {"kind": "scalars", "fields": [{"name": "N", "type": "int", "min": 3, "max": 3}]},
+                    {"kind": "array", "name": "A", "type": "int", "length": "N", "min": 1, "max": 2147483647}
+                  ]
+                }
+                """));
+
+        AiResponseDTO.TestProfile overflow = new AiResponseDTO.TestProfile();
+        overflow.setName("overflow_int32");
+        dto.setTestProfiles(List.of(overflow));
+
+        List<String> cases = service.synthesize(dto);
+        List<String> values = List.of(cases.get(0).lines().toList().get(1).split(" "));
+
+        assertThat(values).containsExactly("2147483647", "2147483647", "2147482623");
+    }
+
+    @Test
+    void clampsSelectionCountToGeneratedN() throws Exception {
+        AiResponseDTO dto = new AiResponseDTO();
+        dto.setInputSchema(objectMapper.readTree("""
+                {
+                  "multiple_test_cases": false,
+                  "lines": [
+                    {
+                      "kind": "scalars",
+                      "fields": [
+                        {"name": "N", "type": "int", "min": 2, "max": 5},
+                        {"name": "C", "type": "int", "min": 2, "max": 100000}
+                      ]
+                    },
+                    {"kind": "array", "name": "X", "type": "int", "length": "N", "min": 0, "max": 1000000000}
+                  ]
+                }
+                """));
+
+        List<String> lines = service.synthesize(dto).get(0).lines().toList();
+        String[] header = lines.get(0).split(" ");
+
+        assertThat(Integer.parseInt(header[1])).isLessThanOrEqualTo(Integer.parseInt(header[0]));
+    }
 }

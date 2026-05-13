@@ -173,6 +173,9 @@ public class FallbackGeneratorFactory {
             if (edgeLengthRefs.contains(name) && !names.isEmpty()) {
                 String nodeVar = names.get(0);
                 expression = "clampValue(" + expression + ", " + lo + "LL, max(" + lo + "LL, min(" + hi + "LL, " + nodeVar + " - 1)))";
+            } else if (dependentCountLike(lowerName) && !names.isEmpty()) {
+                String countVar = names.get(0);
+                expression = "clampValue(" + expression + ", " + lo + "LL, max(" + lo + "LL, min(" + hi + "LL, " + countVar + ")))";
             }
 
             body.append("long long ").append(name).append(" = ").append(expression).append(";\n");
@@ -407,6 +410,10 @@ public class FallbackGeneratorFactory {
 
     private boolean isIdentifier(String value) {
         return value != null && value.matches("[A-Za-z_][A-Za-z0-9_]*");
+    }
+
+    private boolean dependentCountLike(String name) {
+        return name != null && name.matches("[ck]");
     }
 
     private String sanitizeIdentifier(String value) {

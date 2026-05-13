@@ -3,7 +3,9 @@ package com.pbj.service;
 import com.pbj.dto.AiResponseDTO;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -12,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ProblemServiceQualityTest {
 
     private final ProblemService service = new ProblemService(
-            null, null, null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null, null);
 
     @Test
     void qualityReportScoresKeySignals() {
@@ -71,6 +73,40 @@ class ProblemServiceQualityTest {
         quality.withKilledBySuite(Set.of());
 
         service.validateQualityGate(dto, quality);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void overflowRiskAddsBroaderMiningProfiles() throws Exception {
+        AiResponseDTO dto = new AiResponseDTO();
+        dto.setWrongSolutions(List.of(probe("overflow_probe", "overflow")));
+
+        Method method = ProblemService.class.getDeclaredMethod("buildProbeMiningProfiles", AiResponseDTO.class);
+        method.setAccessible(true);
+        Map<String, Integer> profiles = (Map<String, Integer>) method.invoke(service, dto);
+
+        assertThat(profiles).containsKeys(
+                "overflow_int32",
+                "overflow_int64_if_relevant",
+                "random_large",
+                "stress_performance"
+        );
+    }
+
+    @Test
+    void generatorProbeProfilesCoverRuntimeProfiles() throws Exception {
+        Method method = ProblemService.class.getDeclaredMethod("buildGeneratorProbeProfiles");
+        method.setAccessible(true);
+        String[] profiles = (String[]) method.invoke(service);
+
+        assertThat(profiles).contains(
+                "edge_boundary",
+                "random_small",
+                "random_large",
+                "overflow_int64_if_relevant",
+                "adversarial_structure",
+                "stress_performance"
+        );
     }
 
     private AiResponseDTO.ExecutableWrongSolution probe(String name, String type) {

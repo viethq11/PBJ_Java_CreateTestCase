@@ -131,6 +131,10 @@ public class AdversarialTestSynthesisService {
                 long value = countLike(name)
                         ? countValueForProfile(profile, lo, hi)
                         : valueForProfile(profile, lo, hi, 0, true);
+                if (dependentCountLike(name)) {
+                    long n = getVar(vars, "N", getVar(vars, "n", value));
+                    value = clamp(value, lo, Math.min(hi, Math.max(lo, n)));
+                }
                 putVar(vars, name, value);
             }
         }
@@ -350,12 +354,25 @@ public class AdversarialTestSynthesisService {
 
     private long overflowValue(long lo, long hi, long index, long threshold, boolean scalarContext) {
         if (hi <= lo) return hi;
-        if (hi >= threshold / 4L) {
-            long nearHi = hi - Math.min(2L, Math.max(0L, hi - lo));
-            return index % 2 == 0 ? hi : nearHi;
-        }
         if (scalarContext) return hi;
-        return index % 2 == 0 ? hi : Math.max(lo, hi - Math.min(3L, hi - lo));
+
+        // Prefer long runs of extreme values to trigger accumulator/index overflow bugs.
+        if (lo < 0L && hi > 0L) {
+            long nearHi = hi - Math.min(1_024L, Math.max(1L, (hi - lo) / 16L));
+            return switch ((int) (index % 4L)) {
+                case 0 -> hi;
+                case 1 -> hi;
+                case 2 -> lo;
+                default -> Math.max(lo, nearHi);
+            };
+        }
+
+        if (hi >= threshold / 4L) {
+            long nearHi = hi - Math.min(1_024L, Math.max(1L, (hi - lo) / 16L));
+            return index % 4L == 2L ? Math.max(lo, nearHi) : hi;
+        }
+
+        return hi;
     }
 
     private long lengthValue(JsonNode node, Map<String, Long> vars, long fallback) {
@@ -429,6 +446,11 @@ public class AdversarialTestSynthesisService {
         String lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
         return lower.matches("[nmkqtr]") || lower.contains("count") || lower.contains("size")
                 || lower.contains("len") || lower.contains("length");
+    }
+
+    private boolean dependentCountLike(String name) {
+        String lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        return lower.matches("[ck]");
     }
 
     private int countNodeColumns(JsonNode columns) {

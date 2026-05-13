@@ -59,4 +59,29 @@ class FallbackGeneratorFactoryTest {
         assertThat(candidates.get(0)).contains("cout << alphabet[idx];");
         assertThat(candidates.get(0)).doesNotContain("if (c) cout << ' '");
     }
+
+    @Test
+    void schemaFallbackClampsSelectionCountToN() throws Exception {
+        AiResponseDTO dto = new AiResponseDTO();
+        dto.setInputSchema(objectMapper.readTree("""
+                {
+                  "multiple_test_cases": false,
+                  "lines": [
+                    {
+                      "kind": "scalars",
+                      "fields": [
+                        {"name": "N", "type": "int", "min": 2, "max": 100000},
+                        {"name": "C", "type": "int", "min": 2, "max": 100000}
+                      ]
+                    },
+                    {"kind": "array", "name": "X", "type": "int", "length": "N", "min": 0, "max": 1000000000}
+                  ]
+                }
+                """));
+
+        List<String> candidates = factory.createCandidates(dto);
+
+        assertThat(candidates.get(0)).contains("long long C = clampValue(");
+        assertThat(candidates.get(0)).contains("min(100000LL, N)");
+    }
 }

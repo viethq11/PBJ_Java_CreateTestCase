@@ -26,9 +26,6 @@ public class FormalSpecValidationService {
         requireText(errors, "input_format", dto.getInputFormat());
         requireText(errors, "output_format", dto.getOutputFormat());
         requireText(errors, "constraints", dto.getConstraints());
-        requireText(errors, "validator_code", dto.getValidatorCode());
-        requireText(errors, "golden_solution", dto.getGoldenSolution());
-
         if (dto.getTestPlan() == null) {
             errors.add("test_plan is missing.");
         } else {

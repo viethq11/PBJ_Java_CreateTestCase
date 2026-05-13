@@ -1,6 +1,7 @@
 package com.pbj.service;
 
 import com.fasterxml.jackson.core.json.JsonReadFeature;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,8 +19,10 @@ import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
 
 @Service
 public class GeminiTestGenerationService {
@@ -68,7 +71,11 @@ public class GeminiTestGenerationService {
     public AiResponseDTO generateTestArtifacts(String problemText, String analysisJson, int count) {
         String prompt = buildGenerationPrompt(problemText, analysisJson, count);
         Map<String, Object> requestBody = Map.of(
-                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt))))
+                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
+                "generationConfig", Map.of(
+                        "responseMimeType", "application/json",
+                        "temperature", 0.2
+                )
         );
         String responseText = executeGeminiRequest(requestBody, "Gemini (Test Generation)");
         return parseAnalysisResponse(responseText);
@@ -127,9 +134,10 @@ public class GeminiTestGenerationService {
                 ABSOLUTE RULE #1 — NEVER GENERATE HUGE RAW TESTCASES
                 NEVER output large arrays, N=100000 raw lines, or manually computed expected outputs.
 
-                ABSOLUTE RULE #2 — GENERATE CODE, NOT DATA
-                ALWAYS write golden_solution, validator_code, and test_plan.
-                Leave generator_code as an empty string. A local Ollama service will write the generator from your normalized spec.
+                ABSOLUTE RULE #2 — SPEC ONLY, NO CODE
+                Return ONLY normalized formal specification and test planning metadata.
+                Do NOT include source code or pseudo-code in any field.
+                generator_code, golden_solution, validator_code, bruteforce_solution must be empty strings.
 
                 ABSOLUTE RULE #3 — ADVERSARIAL TESTING
                 Include named test-family functions that target likely wrong solutions from analysis_json.
@@ -142,6 +150,9 @@ public class GeminiTestGenerationService {
                 Output ONLY a valid JSON object. No markdown.
                 Inside string values, represent newlines using literal \\n.
                 Inside string values, escape all double-quotes as \\" and all backslashes as \\\\.
+                Because code is forbidden in this phase:
+                - Do not include *_b64 fields.
+                - Keep wrong_solutions[].code as empty string.
 
                 ABSOLUTE RULE #5 — VIETNAMESE USER-FACING STATEMENT
                 The user-facing problem statement fields MUST be written in Vietnamese:
@@ -184,7 +195,7 @@ public class GeminiTestGenerationService {
                     ]
                   },
                   "checker_code": "Java Checker code if special judge needed, else empty string",
-                  "validator_code": "Complete Python 3 validator. Read stdin, assert input format/constraints, exit non-zero on invalid input.",
+                  "validator_code": "",
                   "bug_classes": [
                     {
                       "name": "INTEGER_OVERFLOW",
@@ -230,7 +241,7 @@ public class GeminiTestGenerationService {
                       "language": "cpp",
                       "expected_to_fail": true,
                       "killed_by_profiles": ["overflow_int32"],
-                      "code": "Complete C++ wrong solution code"
+                      "code": ""
                     },
                     {
                       "name": "greedy_probe",
@@ -239,7 +250,7 @@ public class GeminiTestGenerationService {
                       "language": "cpp",
                       "expected_to_fail": true,
                       "killed_by_profiles": ["anti_greedy_small", "tie_breaking"],
-                      "code": "Complete C++ wrong solution code"
+                      "code": ""
                     }
                   ],
                   "test_profiles": [
@@ -271,8 +282,8 @@ public class GeminiTestGenerationService {
                   "total_testcases": %d,
                   "generator_language": "cpp",
                   "generator_code": "",
-                  "golden_solution": "Complete correct C++17 solution",
-                  "bruteforce_solution": "Complete brute force C++17 or Python solution for very small constraints",
+                  "golden_solution": "",
+                  "bruteforce_solution": "",
                   "bruteforce_language": "cpp",
                   "validator_rules": ["rule 1", "rule 2"],
                   "generation_strategy": {
@@ -336,7 +347,7 @@ public class GeminiTestGenerationService {
                 .replace(",\\n", ",");
 
         try {
-            JsonNode root = objectMapper.readTree(cleanedText);
+            JsonNode root = readJsonWithContext(cleanedText);
             AiResponseDTO dto = new AiResponseDTO();
             dto.setUnderstanding(root.path("understanding").asText(""));
             dto.setFormattedDescription(root.path("formatted_description").asText(""));
@@ -348,12 +359,12 @@ public class GeminiTestGenerationService {
                 dto.setInputSchema(inputSchemaNode.deepCopy());
             }
             dto.setCheckerCode(root.path("checker_code").asText(""));
-            dto.setValidatorCode(root.path("validator_code").asText(""));
+            dto.setValidatorCode(readCodeField(root, "validator_code"));
             dto.setTotalTestcases(root.path("total_testcases").asInt(10));
             dto.setGeneratorCode(root.path("generator_code").asText(""));
             dto.setGeneratorLanguage(root.path("generator_language").asText("python"));
-            dto.setGoldenSolution(root.path("golden_solution").asText(""));
-            dto.setBruteForceSolution(root.path("bruteforce_solution").asText(""));
+            dto.setGoldenSolution(readCodeField(root, "golden_solution"));
+            dto.setBruteForceSolution(readCodeField(root, "bruteforce_solution"));
             dto.setBruteForceLanguage(root.path("bruteforce_language").asText("cpp"));
 
             JsonNode testPlanNode = root.path("test_plan");
@@ -368,8 +379,23 @@ public class GeminiTestGenerationService {
 
             JsonNode wrongSolutionsNode = root.path("wrong_solutions");
             if (wrongSolutionsNode.isArray()) {
-                dto.setWrongSolutions(objectMapper.readerForListOf(AiResponseDTO.ExecutableWrongSolution.class)
-                        .readValue(wrongSolutionsNode));
+                List<AiResponseDTO.ExecutableWrongSolution> wrongSolutions = new ArrayList<>();
+                for (JsonNode node : wrongSolutionsNode) {
+                    AiResponseDTO.ExecutableWrongSolution ws = new AiResponseDTO.ExecutableWrongSolution();
+                    ws.setName(node.path("name").asText(""));
+                    ws.setType(node.path("type").asText(""));
+                    ws.setIdea(node.path("idea").asText(""));
+                    ws.setLanguage(node.path("language").asText(""));
+                    ws.setExpectedToFail(node.path("expected_to_fail").asBoolean(true));
+                    if (node.path("killed_by_profiles").isArray()) {
+                        List<String> killed = new ArrayList<>();
+                        node.path("killed_by_profiles").forEach(k -> killed.add(k.asText("")));
+                        ws.setKilledByProfiles(killed);
+                    }
+                    ws.setCode(readCodeField(node, "code"));
+                    wrongSolutions.add(ws);
+                }
+                dto.setWrongSolutions(wrongSolutions);
             }
 
             JsonNode testProfilesNode = root.path("test_profiles");
@@ -412,6 +438,45 @@ public class GeminiTestGenerationService {
             System.err.println(cleanedText);
             System.err.println("==========================================\n");
             throw new RuntimeException("Failed to parse Gemini test generation response: " + e.getMessage(), e);
+        }
+    }
+
+    private JsonNode readJsonWithContext(String jsonText) throws JsonProcessingException {
+        try {
+            return objectMapper.readTree(jsonText);
+        } catch (JsonProcessingException e) {
+            long offset = e.getLocation() == null ? -1L : e.getLocation().getCharOffset();
+            String context = jsonContext(jsonText, offset);
+            throw new JsonProcessingException(e.getOriginalMessage()
+                    + (context.isBlank() ? "" : " Near: " + context), e) {};
+        }
+    }
+
+    private String jsonContext(String text, long offset) {
+        if (text == null || text.isBlank() || offset < 0L) return "";
+        int center = (int) Math.min(offset, text.length());
+        int start = Math.max(0, center - 180);
+        int end = Math.min(text.length(), center + 180);
+        return text.substring(start, end)
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t");
+    }
+
+    private String readCodeField(JsonNode root, String plainFieldName) {
+        String encodedFieldName = plainFieldName + "_b64";
+        String encoded = root.path(encodedFieldName).asText("").trim();
+        if (!encoded.isBlank()) {
+            return decodeBase64Utf8(encoded, encodedFieldName);
+        }
+        return root.path(plainFieldName).asText("");
+    }
+
+    private String decodeBase64Utf8(String value, String fieldName) {
+        try {
+            return new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("Invalid base64 in field " + fieldName + ": " + e.getMessage(), e);
         }
     }
 

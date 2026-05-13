@@ -29,6 +29,9 @@ spring:
 
 testcase:
   storage-dir: /app/testcase-data
+  legacy-migration:
+    enabled: true
+    batch-size: 500
 
 async:
   core-pool-size: 4

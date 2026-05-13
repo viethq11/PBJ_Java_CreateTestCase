@@ -83,8 +83,13 @@ public class OllamaGeneratorService {
                 You must follow this contract strictly:
                 1. Read two command line arguments:
                    argv[1] = seed
-                   argv[2] = size_level
-                   size_level in {"small", "medium", "large", "stress"}
+                   argv[2] = profile_name
+                   profile_name is usually one of:
+                   {"edge_boundary", "overflow_int32", "overflow_int64_if_relevant",
+                    "anti_greedy_small", "tie_breaking", "random_small",
+                    "random_large", "stress_performance", "adversarial_structure"}
+                   You may internally map these to small/medium/large/stress buckets, but you must
+                   also make the output shape react to the profile objective when possible.
                 2. Output exactly one valid testcase.
                 3. All generated values must satisfy the problem constraints.
                 4. For graph problems:
@@ -104,9 +109,9 @@ public class OllamaGeneratorService {
                    using namespace std;
                    int main(int argc, char** argv) {
                        int seed = stoi(argv[1]);
-                       string size = argv[2];
+                       string profile = argv[2];
                        mt19937 rng(seed);
-                       // choose constraints by size
+                       // choose constraints by profile
                        // generate valid input
                        // print testcase
                    }
@@ -142,13 +147,13 @@ public class OllamaGeneratorService {
                 Rules:
                 - Return only corrected C++17 code.
                 - Match the JSON input_format exactly. Do not add arrays, edges, queries, or sections unless the input_format requires them.
-                - The corrected generator must pass the validator for small, medium, large, and stress.
+                - The corrected generator must pass the validator for boundary, random, overflow, greedy, and stress-style profiles.
                 - Never print node 0.
                 - For graph nodes, all node ids must be generated in 1..N.
                 - If a field is binary, print only 0 or 1.
                 - Keep M inside constraints.
                 - Do not use unbounded retry loops.
-                - The generator must accept argv[1]=seed and argv[2]=size_level.
+                - The generator must accept argv[1]=seed and argv[2]=profile_name.
                 - Do not include markdown fences, special tokens, BOS/EOS markers, or prose.
                 """.formatted(
                 generatorSpecJson == null ? "{}" : generatorSpecJson,

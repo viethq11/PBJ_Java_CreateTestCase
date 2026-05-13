@@ -18,8 +18,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -36,6 +40,7 @@ public class ProblemService {
     private final TestCaseStorageService testCaseStorageService;
     private final FallbackGeneratorFactory fallbackGeneratorFactory;
     private final FormalSpecValidationService formalSpecValidationService;
+    private final AdversarialTestSynthesisService adversarialTestSynthesisService;
     private final ObjectMapper objectMapper;
 
     @Value("${ai.debug-dir:/app/ai-debug}")
@@ -45,36 +50,36 @@ public class ProblemService {
     // Test-case batch sizes to run through the generator
     // ======================================================================
     private static final String[][] GENERATOR_RUNS = {
-        {"small",  "1"},
-        {"small",  "2"},
-        {"medium", "3"},
-        {"medium", "4"},
-        {"medium", "5"},
-        {"large",  "6"},
-        {"large",  "7"},
-        {"large",  "8"},
-        {"large",  "9"},
-        {"large",  "10"},
-        {"stress", "11"},
-        {"stress", "12"},
-        {"stress", "13"},
-        {"stress", "14"},
-        {"stress", "15"},
-        {"stress", "16"},
-        {"stress", "17"},
-        {"stress", "18"},
-        {"stress", "19"},
-        {"stress", "20"},
-        {"stress", "21"},
-        {"stress", "22"},
-        {"stress", "23"},
-        {"stress", "24"},
-        {"stress", "25"},
-        {"stress", "26"},
-        {"stress", "27"},
-        {"stress", "28"},
-        {"stress", "29"},
-        {"stress", "30"},
+        {"edge_boundary", "1"},
+        {"edge_boundary", "2"},
+        {"random_small", "3"},
+        {"random_small", "4"},
+        {"anti_greedy_small", "5"},
+        {"anti_greedy_small", "6"},
+        {"tie_breaking", "7"},
+        {"tie_breaking", "8"},
+        {"overflow_int32", "9"},
+        {"overflow_int32", "10"},
+        {"random_large", "11"},
+        {"random_large", "12"},
+        {"random_large", "13"},
+        {"adversarial_structure", "14"},
+        {"adversarial_structure", "15"},
+        {"stress_performance", "16"},
+        {"stress_performance", "17"},
+        {"stress_performance", "18"},
+        {"stress_performance", "19"},
+        {"stress_performance", "20"},
+        {"stress_performance", "21"},
+        {"stress_performance", "22"},
+        {"stress_performance", "23"},
+        {"stress_performance", "24"},
+        {"overflow_int64_if_relevant", "25"},
+        {"overflow_int64_if_relevant", "26"},
+        {"random_large", "27"},
+        {"adversarial_structure", "28"},
+        {"stress_performance", "29"},
+        {"stress_performance", "30"},
     };
 
     // ======================================================================
@@ -241,8 +246,8 @@ public class ProblemService {
             String goldenCode = resolveGoldenSolution(p, dto);
 
             if (goldenCode != null && !goldenCode.isBlank()) {
-                int savedCount = generateTestCasesFromCode(p, dto, goldenCode);
-                verifyGenerationResult(p, savedCount, p.getId(), goldenCode);
+                GenerationOutcome outcome = generateTestCasesFromCode(p, dto, goldenCode);
+                verifyGenerationResult(p, outcome, p.getId(), goldenCode, dto);
             } else {
                 saveEdgeCases(p, dto.getEdgeCases(), goldenCode);
             }
@@ -286,8 +291,8 @@ public class ProblemService {
         }
 
         try {
-            int savedCount = generateTestCasesFromCode(problem, dto, goldenCode);
-            verifyGenerationResult(problem, savedCount, problemId, goldenCode);
+            GenerationOutcome outcome = generateTestCasesFromCode(problem, dto, goldenCode);
+            verifyGenerationResult(problem, outcome, problemId, goldenCode, dto);
             aiIntegrationService.saveValidatedTestGeneration(
                     problem.getDescription(), new ArrayList<>(), GENERATOR_RUNS.length, dto);
         } catch (RuntimeException e) {
@@ -301,7 +306,7 @@ public class ProblemService {
     // PRIVATE: Generator pipeline
     // ======================================================================
 
-    private int generateTestCasesFromCode(Problem problem, AiResponseDTO dto, String goldenCode) {
+    private GenerationOutcome generateTestCasesFromCode(Problem problem, AiResponseDTO dto, String goldenCode) {
         String generatorCode     = prepareValidGenerator(dto);
         String generatorLanguage = dto.getGeneratorLanguage() != null ? dto.getGeneratorLanguage() : "python";
 
@@ -309,24 +314,26 @@ public class ProblemService {
         AtomicInteger savedCount = new AtomicInteger(0);
         AtomicInteger generatedCount = new AtomicInteger(0);
         AtomicInteger rejectedGeneratedCount = new AtomicInteger(0);
+        GenerationQualitySummary quality = new GenerationQualitySummary();
+        quality.hasBruteForceArtifact = dto.getBruteForceSolution() != null && !dto.getBruteForceSolution().isBlank();
 
         // 1. Manually crafted edge cases first
         savedCount.addAndGet(saveEdgeCases(problem, dto.getEdgeCases(), goldenCode));
 
         // 2. Generator-based cases
-            if (generatorCode != null && !generatorCode.isBlank()) {
+        if (generatorCode != null && !generatorCode.isBlank()) {
             int tcSeq = savedCount.get() + 1;
             for (String[] run : GENERATOR_RUNS) {
-                String size = run[0];
+                String profile = run[0];
                 int seed    = Integer.parseInt(run[1]);
 
-                System.out.println("DEBUG: Running generator seed=" + seed + " size=" + size);
+                System.out.println("DEBUG: Running generator seed=" + seed + " profile=" + profile);
                 CodeExecutionService.GeneratorResult generatorResult = codeExecutionService.runGeneratorDetailed(
-                        generatorCode, generatorLanguage, seed, size);
+                        generatorCode, generatorLanguage, seed, profile);
 
                 if (!generatorResult.success) {
                     System.err.println("DEBUG: Generator failed for seed=" + seed
-                            + " size=" + size + ": " + generatorResult.message);
+                            + " profile=" + profile + ": " + generatorResult.message);
                     rejectedGeneratedCount.incrementAndGet();
                     continue;
                 }
@@ -337,7 +344,7 @@ public class ProblemService {
                         codeExecutionService.runValidatorDetailed(dto.getValidatorCode(), generatedInput);
                 if (!validatorResult.valid) {
                     System.err.println("DEBUG: Validator rejected generated input for seed=" + seed
-                            + " size=" + size + ": " + validatorResult.message);
+                            + " profile=" + profile + ": " + validatorResult.message);
                     rejectedGeneratedCount.incrementAndGet();
                     continue;
                 }
@@ -356,23 +363,142 @@ public class ProblemService {
                     continue;
                 }
 
-                boolean isSample = size.equals("small") && seed == 1;
+                boolean isSample = profile.equals("edge_boundary") && seed == 1;
                 testCaseStorageService.saveTestCase(problem, generatedInput, expectedOutput, isSample, tcSeq++);
                 savedCount.incrementAndGet();
                 generatedCount.incrementAndGet();
-                System.out.println("DEBUG: Saved testcase (seed=" + seed + ", size=" + size + ")");
+                quality.acceptedProfiles.add(profile);
+                System.out.println("DEBUG: Saved testcase (seed=" + seed + ", profile=" + profile + ")");
             }
         }
 
-        if (generatorCode != null && !generatorCode.isBlank() && generatedCount.get() < 8) {
+        int adversarialCount = saveAdversarialCases(
+                problem, dto, goldenCode, fingerprints, savedCount.get() + 1, quality);
+        savedCount.addAndGet(adversarialCount);
+
+        int minedCount = saveProbeKillerCases(
+                problem, dto, goldenCode, generatorCode, generatorLanguage, fingerprints, savedCount.get() + 1, quality);
+        savedCount.addAndGet(minedCount);
+
+        if (generatorCode != null && !generatorCode.isBlank()
+                && generatedCount.get() + adversarialCount + minedCount < 8) {
             throw new IllegalStateException(
-                    "Generated testcase artifact is invalid: only " + generatedCount.get()
-                    + " generator-based cases were accepted, "
+                    "Generated testcase artifact is invalid: only "
+                    + (generatedCount.get() + adversarialCount + minedCount)
+                    + " generator/adversarial cases were accepted, "
                     + rejectedGeneratedCount.get() + " were rejected or timed out. "
                     + "The cached Gemini generator/validator has been evicted; please try again.");
         }
 
-        return savedCount.get();
+        return new GenerationOutcome(savedCount.get(), quality);
+    }
+
+    private int saveProbeKillerCases(Problem problem, AiResponseDTO dto, String goldenCode,
+                                     String generatorCode, String generatorLanguage,
+                                     Set<String> fingerprints, int startSeq,
+                                     GenerationQualitySummary quality) {
+        if (generatorCode == null || generatorCode.isBlank()) return 0;
+
+        List<AiResponseDTO.ExecutableWrongSolution> probes = executableWrongSolutions(dto);
+        if (probes.isEmpty()) return 0;
+
+        String bruteForceCode = dto.getBruteForceSolution();
+        String bruteForceLanguage = normalizeProbeLanguage(dto.getBruteForceLanguage());
+        boolean hasBruteForce = bruteForceCode != null && !bruteForceCode.isBlank();
+        int bruteForceTimeLimit = Math.max(3000, Math.min(10_000, problem.getTimeLimit() * 3));
+
+        int saved = 0;
+        for (Map.Entry<String, Integer> run : buildProbeMiningProfiles(dto).entrySet()) {
+            String profile = run.getKey();
+            int attempts = run.getValue();
+
+            for (int i = 0; i < attempts && saved < 6; i++) {
+                int seed = 200 + saved * 50 + i + Math.abs(profile.hashCode() % 31);
+                CodeExecutionService.GeneratorResult generatorResult = codeExecutionService.runGeneratorDetailed(
+                        generatorCode, generatorLanguage, seed, profile);
+                if (!generatorResult.success) continue;
+
+                String input = generatorResult.output;
+                CodeExecutionService.ValidatorResult validatorResult =
+                        codeExecutionService.runValidatorDetailed(dto.getValidatorCode(), input);
+                if (!validatorResult.valid) continue;
+
+                String goldenOutput = codeExecutionService.runGoldenSolution(
+                        goldenCode, "cpp", input, problem.getTimeLimit());
+                if (goldenOutput == null || goldenOutput.isBlank()) continue;
+
+                if (hasBruteForce && isBruteForceFriendlyProfile(profile)) {
+                    String bruteForceOutput = codeExecutionService.runGoldenSolution(
+                            bruteForceCode, bruteForceLanguage, input, bruteForceTimeLimit);
+                    if (bruteForceOutput == null || bruteForceOutput.isBlank()) {
+                        continue;
+                    }
+                    if (!normalizedOutputEquals(goldenOutput, bruteForceOutput)) {
+                        throw new IllegalStateException(
+                                "Golden solution disagrees with brute-force checker on profile=" + profile
+                                        + " seed=" + seed + ". This indicates the reference solution or spec is inconsistent.");
+                    }
+                    quality.bruteForceVerifiedCases++;
+                }
+
+                Set<String> killed = killedProbeNames(problem, probes, input, goldenOutput);
+                if (killed.isEmpty()) continue;
+                if (!isUniqueTestCase(input, goldenOutput, fingerprints)) continue;
+
+                testCaseStorageService.saveTestCase(problem, input, goldenOutput, false, startSeq + saved);
+                saved++;
+                quality.minedProbeKillerCases++;
+                quality.acceptedProfiles.add(profile);
+                quality.killedProbeNames.addAll(killed);
+                System.out.println("INFO: Saved probe-killer testcase profile=" + profile
+                        + " seed=" + seed + " kills=" + String.join(", ", killed));
+            }
+        }
+
+        if (saved > 0) {
+            System.out.println("INFO: Added " + saved + " mined probe-killer testcases.");
+        }
+        return saved;
+    }
+
+    private int saveAdversarialCases(Problem problem, AiResponseDTO dto, String goldenCode,
+                                     Set<String> fingerprints, int startSeq,
+                                     GenerationQualitySummary quality) {
+        List<String> candidates = adversarialTestSynthesisService.synthesize(dto);
+        if (candidates.isEmpty()) return 0;
+
+        int saved = 0;
+        for (String input : candidates) {
+            if (input == null || input.isBlank()) continue;
+
+            CodeExecutionService.ValidatorResult validatorResult =
+                    codeExecutionService.runValidatorDetailed(dto.getValidatorCode(), input);
+            if (!validatorResult.valid) {
+                System.err.println("DEBUG: Validator rejected adversarial testcase: " + validatorResult.message);
+                continue;
+            }
+
+            String expectedOutput = codeExecutionService.runGoldenSolution(
+                    goldenCode, "cpp", input, problem.getTimeLimit());
+            if (expectedOutput == null || expectedOutput.isBlank()) {
+                System.err.println("DEBUG: Golden solution failed for adversarial testcase.");
+                continue;
+            }
+
+            if (!isUniqueTestCase(input, expectedOutput, fingerprints)) {
+                continue;
+            }
+
+            testCaseStorageService.saveTestCase(problem, input, expectedOutput, false, startSeq + saved);
+            saved++;
+            quality.deterministicAdversarialCases++;
+            System.out.println("DEBUG: Saved adversarial testcase #" + saved);
+        }
+
+        if (saved > 0) {
+            System.out.println("INFO: Added " + saved + " deterministic adversarial testcases.");
+        }
+        return saved;
     }
 
     private String prepareValidGenerator(AiResponseDTO dto) {
@@ -380,7 +506,7 @@ public class ProblemService {
         if (generatorCode == null || generatorCode.isBlank()) return generatorCode;
 
         String language = dto.getGeneratorLanguage() != null ? dto.getGeneratorLanguage() : "python";
-        String[] probeSizes = {"small", "medium", "large", "stress"};
+        String[] probeSizes = {"edge_boundary", "random_small", "random_large", "stress_performance"};
         int repairs = 0;
         String lastError = "";
         logGeneratorDebug("initial", generatorCode);
@@ -571,17 +697,20 @@ public class ProblemService {
         return true;
     }
 
-    private void verifyGenerationResult(Problem problem, int savedCount, Long problemId, String goldenCode) {
-        if (savedCount == 0) {
+    private void verifyGenerationResult(Problem problem, GenerationOutcome outcome, Long problemId,
+                                        String goldenCode, AiResponseDTO dto) {
+        if (outcome.savedCount == 0) {
             throw new IllegalStateException(
                     "Failed to generate any valid testcases. " +
                     "Generator script may have failed or golden solution compilation failed.");
         }
-        System.out.println("INFO: Generated " + savedCount + " testcases for problem " + problemId);
+        System.out.println("INFO: Generated " + outcome.savedCount + " testcases for problem " + problemId);
 
         List<TestCase> finalCases = getTestCases(problemId);
         try {
             validateVerdictSeparation(problem, finalCases, goldenCode);
+            Set<String> killedBySuite = validateWrongSolutionCoverage(problem, finalCases, dto);
+            validateQualityGate(dto, outcome.quality.withKilledBySuite(killedBySuite));
             System.out.println("SUCCESS: Verdict separation checks passed.");
         } catch (IllegalStateException validationEx) {
             System.err.println("WARNING: Verdict separation check failed: " + validationEx.getMessage());
@@ -638,4 +767,315 @@ public class ProblemService {
             System.err.println("WARNING: Could not run generated TLE probe: " + e.getMessage());
         }
     }
+
+    private Set<String> validateWrongSolutionCoverage(Problem problem, List<TestCase> testcases, AiResponseDTO dto) {
+        List<AiResponseDTO.ExecutableWrongSolution> probes = executableWrongSolutions(dto);
+        if (probes.isEmpty()) return Set.of();
+
+        Set<String> killed = new LinkedHashSet<>();
+        for (AiResponseDTO.ExecutableWrongSolution probe : probes) {
+            String language = normalizeProbeLanguage(probe.getLanguage());
+            CodeExecutionService.SubmissionResult result = codeExecutionService.runCode(
+                    probe.getCode(), language, testcases, problem.getTimeLimit(), problem.getCheckerCode(), null);
+            if (result != null && result.status != CodeExecutionService.RunResult.AC) {
+                killed.add(probe.getName() == null || probe.getName().isBlank() ? "unnamed_probe" : probe.getName());
+            }
+        }
+
+        if (killed.isEmpty()) {
+            throw new IllegalStateException(
+                    "Testcases are weak: none of the executable wrong-solution probes failed. " +
+                    "Need stronger overflow/greedy/boundary coverage.");
+        }
+
+        System.out.println("INFO: Wrong-solution coverage achieved against probes: " + String.join(", ", killed));
+        return killed;
+    }
+
+    void validateQualityGate(AiResponseDTO dto, GenerationQualitySummary quality) {
+        QualityReport report = buildQualityReport(dto, quality);
+        System.out.println("INFO: Test suite quality score=" + report.score + " signals=" + report.signals);
+
+        if (!report.hasBoundaryCoverage) {
+            throw new IllegalStateException("Weak tests: missing boundary-oriented coverage.");
+        }
+        if (report.hasBruteForceArtifact && !report.hasBruteForceVerification) {
+            throw new IllegalStateException("Weak tests: brute-force artifact exists but no small-case cross-check succeeded.");
+        }
+        if (report.hasOverflowRisk && report.hasOverflowProbe && !report.killsOverflowProbe) {
+            throw new IllegalStateException("Weak tests: overflow probe survived; need stronger numeric-extreme cases.");
+        }
+        if (report.hasOverflowRisk && !report.hasOverflowProbe && !report.hasOverflowProfileCoverage) {
+            throw new IllegalStateException("Weak tests: overflow risk detected but there is no overflow-focused coverage.");
+        }
+        if (report.hasGreedyRisk && report.hasGreedyProbe && !report.killsGreedyProbe) {
+            throw new IllegalStateException("Weak tests: greedy probe survived; need stronger anti-greedy/tie-breaking cases.");
+        }
+        if (report.hasGreedyRisk && !report.hasGreedyProbe && !report.hasGreedyProfileCoverage) {
+            throw new IllegalStateException("Weak tests: greedy risk detected but there is no anti-greedy/tie-breaking coverage.");
+        }
+        if (report.score < report.requiredMinScore) {
+            throw new IllegalStateException("Weak tests: quality score too low (" + report.score + "). Required="
+                    + report.requiredMinScore + ". Signals=" + report.signals);
+        }
+    }
+
+    QualityReport buildQualityReport(AiResponseDTO dto, GenerationQualitySummary quality) {
+        LinkedHashSet<String> signals = new LinkedHashSet<>();
+        int score = 0;
+        boolean hasOverflowRisk = hasBugClass(dto, "overflow") || hasProbeType(dto, "overflow");
+        boolean hasGreedyRisk = hasBugClass(dto, "greedy") || hasProbeType(dto, "greedy");
+
+        boolean hasBoundaryCoverage = containsProfileToken(quality.acceptedProfiles, "boundary", "tie");
+        if (hasBoundaryCoverage) {
+            score++;
+            signals.add("boundary");
+        }
+
+        boolean hasBruteForceVerification = quality.bruteForceVerifiedCases > 0;
+        if (hasBruteForceVerification) {
+            score++;
+            signals.add("bruteforce_verified");
+        }
+
+        boolean hasOverflowProfileCoverage = containsProfileToken(
+                quality.acceptedProfiles, "overflow", "int32", "int64");
+        if (hasOverflowRisk && hasOverflowProfileCoverage) {
+            score++;
+            signals.add("overflow_profile");
+        }
+
+        boolean killsOverflowProbe = killsProbeType(dto, quality.killedBySuite, "overflow");
+        if (killsOverflowProbe) {
+            score++;
+            signals.add("kills_overflow_probe");
+        }
+
+        boolean hasGreedyProfileCoverage = containsProfileToken(
+                quality.acceptedProfiles, "greedy", "tie");
+        if (hasGreedyRisk && hasGreedyProfileCoverage) {
+            score++;
+            signals.add("greedy_profile");
+        }
+
+        boolean killsGreedyProbe = killsProbeType(dto, quality.killedBySuite, "greedy");
+        if (killsGreedyProbe) {
+            score++;
+            signals.add("kills_greedy_probe");
+        }
+
+        boolean killsBoundaryProbe = killsProbeType(dto, quality.killedBySuite, "boundary", "off_by_one");
+        if (killsBoundaryProbe) {
+            score++;
+            signals.add("kills_boundary_probe");
+        }
+
+        if (containsProfileToken(quality.acceptedProfiles, "stress", "large", "overflow")) {
+            score++;
+            signals.add("max_or_stress");
+        }
+
+        if (quality.minedProbeKillerCases > 0) {
+            score++;
+            signals.add("mined_probe_killers");
+        }
+
+        int requiredMinScore = 3;
+        if (hasOverflowRisk) requiredMinScore++;
+        if (hasGreedyRisk) requiredMinScore++;
+
+        return new QualityReport(
+                score,
+                signals,
+                requiredMinScore,
+                quality.hasBruteForceArtifact,
+                hasBruteForceVerification,
+                hasBoundaryCoverage,
+                hasOverflowRisk,
+                hasProbeType(dto, "overflow"),
+                hasOverflowProfileCoverage,
+                killsOverflowProbe,
+                hasGreedyRisk,
+                hasProbeType(dto, "greedy"),
+                hasGreedyProfileCoverage,
+                killsGreedyProbe
+        );
+    }
+
+    private Map<String, Integer> buildProbeMiningProfiles(AiResponseDTO dto) {
+        Map<String, Integer> profiles = new LinkedHashMap<>();
+
+        if (dto != null && dto.getTestProfiles() != null) {
+            for (AiResponseDTO.TestProfile profile : dto.getTestProfiles()) {
+                if (profile == null || profile.getName() == null || profile.getName().isBlank()) continue;
+                String name = profile.getName().trim();
+                String lower = name.toLowerCase(Locale.ROOT);
+                if (!isMiningProfile(dto, lower)) continue;
+                int attempts = Math.max(8, Math.min(30, (profile.getSeedCount() == null ? 2 : profile.getSeedCount()) * 6));
+                profiles.putIfAbsent(name, attempts);
+            }
+        }
+
+        for (AiResponseDTO.ExecutableWrongSolution probe : executableWrongSolutions(dto)) {
+            if (probe.getKilledByProfiles() == null) continue;
+            for (String profile : probe.getKilledByProfiles()) {
+                if (profile == null || profile.isBlank()) continue;
+                profiles.putIfAbsent(profile.trim(), defaultAttemptsForProfile(profile));
+            }
+        }
+
+        if (profiles.isEmpty()) {
+            profiles.put("random_small", 12);
+            profiles.put("anti_greedy_small", 14);
+            profiles.put("tie_breaking", 12);
+            profiles.put("edge_boundary", 8);
+            if (hasBugClass(dto, "overflow") || hasProbeType(dto, "overflow")) {
+                profiles.put("overflow_int32", 10);
+            }
+        }
+
+        return profiles;
+    }
+
+    private boolean isMiningProfile(AiResponseDTO dto, String lower) {
+        if (lower.contains("overflow")) return hasBugClass(dto, "overflow") || hasProbeType(dto, "overflow");
+        return lower.contains("small")
+                || lower.contains("tie")
+                || lower.contains("boundary")
+                || lower.contains("greedy");
+    }
+
+    private int defaultAttemptsForProfile(String profile) {
+        String lower = profile == null ? "" : profile.toLowerCase(Locale.ROOT);
+        if (lower.contains("overflow")) return 10;
+        if (lower.contains("greedy") || lower.contains("tie")) return 14;
+        if (lower.contains("boundary")) return 8;
+        return 12;
+    }
+
+    private boolean isBruteForceFriendlyProfile(String profile) {
+        String lower = profile == null ? "" : profile.toLowerCase(Locale.ROOT);
+        return lower.contains("small") || lower.contains("tie") || lower.contains("boundary");
+    }
+
+    private Set<String> killedProbeNames(Problem problem, List<AiResponseDTO.ExecutableWrongSolution> probes,
+                                         String input, String expectedOutput) {
+        Set<String> killed = new LinkedHashSet<>();
+        TestCase testcase = new TestCase();
+        testcase.setInputData(input);
+        testcase.setOutputData(expectedOutput);
+        List<TestCase> singleton = List.of(testcase);
+
+        for (AiResponseDTO.ExecutableWrongSolution probe : probes) {
+            CodeExecutionService.SubmissionResult result = codeExecutionService.runCode(
+                    probe.getCode(),
+                    normalizeProbeLanguage(probe.getLanguage()),
+                    singleton,
+                    problem.getTimeLimit(),
+                    problem.getCheckerCode(),
+                    null);
+            if (result != null && result.status != CodeExecutionService.RunResult.AC) {
+                killed.add(probe.getName() == null || probe.getName().isBlank() ? "unnamed_probe" : probe.getName());
+            }
+        }
+        return killed;
+    }
+
+    private List<AiResponseDTO.ExecutableWrongSolution> executableWrongSolutions(AiResponseDTO dto) {
+        if (dto == null || dto.getWrongSolutions() == null) return List.of();
+
+        List<AiResponseDTO.ExecutableWrongSolution> probes = new ArrayList<>();
+        for (AiResponseDTO.ExecutableWrongSolution wrong : dto.getWrongSolutions()) {
+            if (wrong == null || wrong.getCode() == null || wrong.getCode().isBlank()) continue;
+            if (Boolean.FALSE.equals(wrong.getExpectedToFail())) continue;
+            probes.add(wrong);
+        }
+        return probes;
+    }
+
+    private boolean normalizedOutputEquals(String left, String right) {
+        if (left == null || right == null) return left == right;
+        return left.trim().replaceAll("\\s+", " ").equals(right.trim().replaceAll("\\s+", " "));
+    }
+
+    private boolean containsProfileToken(Set<String> profiles, String... tokens) {
+        for (String profile : profiles) {
+            String lower = profile == null ? "" : profile.toLowerCase(Locale.ROOT);
+            for (String token : tokens) {
+                if (lower.contains(token)) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasProbeType(AiResponseDTO dto, String... types) {
+        for (AiResponseDTO.ExecutableWrongSolution probe : executableWrongSolutions(dto)) {
+            String lower = probe.getType() == null ? "" : probe.getType().toLowerCase(Locale.ROOT);
+            for (String type : types) {
+                if (lower.contains(type)) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasBugClass(AiResponseDTO dto, String... types) {
+        if (dto == null || dto.getBugClasses() == null) return false;
+        for (AiResponseDTO.BugClass bugClass : dto.getBugClasses()) {
+            String lower = bugClass == null || bugClass.getName() == null ? "" : bugClass.getName().toLowerCase(Locale.ROOT);
+            for (String type : types) {
+                if (lower.contains(type)) return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean killsProbeType(AiResponseDTO dto, Set<String> killedNames, String... types) {
+        for (AiResponseDTO.ExecutableWrongSolution probe : executableWrongSolutions(dto)) {
+            String lower = probe.getType() == null ? "" : probe.getType().toLowerCase(Locale.ROOT);
+            for (String type : types) {
+                if (lower.contains(type) && killedNames.contains(probe.getName())) return true;
+            }
+        }
+        return false;
+    }
+
+    private String normalizeProbeLanguage(String language) {
+        if (language == null || language.isBlank()) return "cpp";
+        String normalized = language.trim().toLowerCase(Locale.ROOT);
+        if (normalized.equals("c++") || normalized.equals("cc") || normalized.equals("g++")) return "cpp";
+        if (normalized.equals("py") || normalized.equals("python3")) return "python";
+        return normalized;
+    }
+
+    private record GenerationOutcome(int savedCount, GenerationQualitySummary quality) {}
+
+    static class GenerationQualitySummary {
+        final Set<String> acceptedProfiles = new LinkedHashSet<>();
+        final Set<String> killedProbeNames = new LinkedHashSet<>();
+        Set<String> killedBySuite = Set.of();
+        int bruteForceVerifiedCases;
+        int minedProbeKillerCases;
+        int deterministicAdversarialCases;
+        boolean hasBruteForceArtifact;
+
+        GenerationQualitySummary withKilledBySuite(Set<String> killedBySuite) {
+            this.killedBySuite = killedBySuite == null ? Set.of() : new LinkedHashSet<>(killedBySuite);
+            return this;
+        }
+    }
+
+    record QualityReport(int score,
+                         Set<String> signals,
+                         int requiredMinScore,
+                         boolean hasBruteForceArtifact,
+                         boolean hasBruteForceVerification,
+                         boolean hasBoundaryCoverage,
+                         boolean hasOverflowRisk,
+                         boolean hasOverflowProbe,
+                         boolean hasOverflowProfileCoverage,
+                         boolean killsOverflowProbe,
+                         boolean hasGreedyRisk,
+                         boolean hasGreedyProbe,
+                         boolean hasGreedyProfileCoverage,
+                         boolean killsGreedyProbe) {}
 }

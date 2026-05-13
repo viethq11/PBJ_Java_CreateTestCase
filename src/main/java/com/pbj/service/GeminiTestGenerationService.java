@@ -135,6 +135,8 @@ public class GeminiTestGenerationService {
                 Include named test-family functions that target likely wrong solutions from analysis_json.
                 Include complexity probes that kill brute-force/TLE approaches under max constraints.
                 Use numeric extremes near min/max constraints, e.g. 10^9, -10^9, and 64-bit sums.
+                You are not only generating tests. You are designing tests to kill common wrong submissions.
+                Explicitly analyze integer overflow, wrong greedy choices, and boundary/off-by-one risks.
 
                 ABSOLUTE RULE #4 — JSON SYNTAX & ESCAPING
                 Output ONLY a valid JSON object. No markdown.
@@ -183,6 +185,15 @@ public class GeminiTestGenerationService {
                   },
                   "checker_code": "Java Checker code if special judge needed, else empty string",
                   "validator_code": "Complete Python 3 validator. Read stdin, assert input format/constraints, exit non-zero on invalid input.",
+                  "bug_classes": [
+                    {
+                      "name": "INTEGER_OVERFLOW",
+                      "risk": "sum/product/path cost can exceed int32 or int64",
+                      "target_variables": ["sum", "answer", "dist"],
+                      "required_tests": ["overflow_int32", "overflow_int64_if_relevant"],
+                      "counterexample_strategy": ["max_n_max_value", "long_path_accumulation"]
+                    }
+                  ],
                   "test_plan": {
                     "problem_type": "short category",
                     "intended_solution": "Correct algorithm and complexity",
@@ -211,10 +222,58 @@ public class GeminiTestGenerationService {
                       "must_avoid_raw_large_data": true
                     }
                   },
+                  "wrong_solutions": [
+                    {
+                      "name": "overflow_probe",
+                      "type": "overflow",
+                      "idea": "Uses int for accumulated answer",
+                      "language": "cpp",
+                      "expected_to_fail": true,
+                      "killed_by_profiles": ["overflow_int32"],
+                      "code": "Complete C++ wrong solution code"
+                    },
+                    {
+                      "name": "greedy_probe",
+                      "type": "greedy",
+                      "idea": "Always takes the locally best move",
+                      "language": "cpp",
+                      "expected_to_fail": true,
+                      "killed_by_profiles": ["anti_greedy_small", "tie_breaking"],
+                      "code": "Complete C++ wrong solution code"
+                    }
+                  ],
+                  "test_profiles": [
+                    {
+                      "name": "edge_boundary",
+                      "objective": "touch minimum and maximum boundaries safely",
+                      "difficulty": "small",
+                      "seed_count": 2,
+                      "targets_wrong_solutions": ["boundary_probe"],
+                      "required": true
+                    },
+                    {
+                      "name": "overflow_int32",
+                      "objective": "force accumulated values above 2^31-1 whenever relevant",
+                      "difficulty": "large",
+                      "seed_count": 2,
+                      "targets_wrong_solutions": ["overflow_probe"],
+                      "required": true
+                    },
+                    {
+                      "name": "anti_greedy_small",
+                      "objective": "small counterexample that defeats natural greedy choices",
+                      "difficulty": "small",
+                      "seed_count": 2,
+                      "targets_wrong_solutions": ["greedy_probe"],
+                      "required": true
+                    }
+                  ],
                   "total_testcases": %d,
                   "generator_language": "cpp",
                   "generator_code": "",
                   "golden_solution": "Complete correct C++17 solution",
+                  "bruteforce_solution": "Complete brute force C++17 or Python solution for very small constraints",
+                  "bruteforce_language": "cpp",
                   "validator_rules": ["rule 1", "rule 2"],
                   "generation_strategy": {
                     "small_cases": true,
@@ -231,6 +290,10 @@ public class GeminiTestGenerationService {
                 - Provide enough normalized detail for a separate local C++ generator model.
                 - For graph n,m up to 2e5, specify valid indexing, directedness, self-loop/multi-edge policy, edge weights/types, and max sparse traps.
                 - For array/window/sum problems, specify numeric min/max, n max, k-sensitive cases, and values near +/-1e9 when allowed.
+                - Include at least one overflow-related or greedy-related wrong solution whenever such risks plausibly exist.
+                - If a natural greedy looks suspicious, provide the smallest counterexample strategy you can.
+                - If the answer can exceed 2^31-1, include overflow_int32 in bug_classes/test_profiles.
+                - If the answer can exceed 2^63-1, mention that explicitly in bug_classes and generator/test profile design.
 
                 input_schema requirements:
                 - It must describe the exact input tokens in order, line by line.
@@ -244,6 +307,16 @@ public class GeminiTestGenerationService {
                 
                 edge_cases: at most 3 tiny manually written cases. No huge raw data.
                 checker_code: empty string for unique-output problems.
+                wrong_solutions requirements:
+                - Provide at least 3 plausible wrong solutions when feasible: overflow, greedy, boundary/off-by-one.
+                - Each wrong solution must be executable code, not prose.
+                - Keep wrong solutions concise but complete.
+                - Use exact type names from this set whenever relevant: overflow, greedy, boundary, off_by_one, brute_force.
+                - If bug_classes includes overflow, you must include at least one executable wrong_solution with type="overflow".
+                - If bug_classes includes greedy, you must include at least one executable wrong_solution with type="greedy".
+                - For each executable wrong_solution, set killed_by_profiles to the most likely testcase profiles that should defeat it.
+                test_profiles requirements:
+                - Prefer named profiles such as edge_boundary, overflow_int32, overflow_int64_if_relevant, anti_greedy_small, tie_breaking, random_small, random_large, stress_performance, adversarial_structure.
                 Final language check before returning:
                 - formatted_description, input_format, and output_format must not be English prose.
                 - If the original statement is English, translate those three fields to Vietnamese.
@@ -280,10 +353,28 @@ public class GeminiTestGenerationService {
             dto.setGeneratorCode(root.path("generator_code").asText(""));
             dto.setGeneratorLanguage(root.path("generator_language").asText("python"));
             dto.setGoldenSolution(root.path("golden_solution").asText(""));
+            dto.setBruteForceSolution(root.path("bruteforce_solution").asText(""));
+            dto.setBruteForceLanguage(root.path("bruteforce_language").asText("cpp"));
 
             JsonNode testPlanNode = root.path("test_plan");
             if (!testPlanNode.isMissingNode() && !testPlanNode.isNull()) {
                 dto.setTestPlan(objectMapper.treeToValue(testPlanNode, AiResponseDTO.TestPlan.class));
+            }
+
+            JsonNode bugClassesNode = root.path("bug_classes");
+            if (bugClassesNode.isArray()) {
+                dto.setBugClasses(objectMapper.readerForListOf(AiResponseDTO.BugClass.class).readValue(bugClassesNode));
+            }
+
+            JsonNode wrongSolutionsNode = root.path("wrong_solutions");
+            if (wrongSolutionsNode.isArray()) {
+                dto.setWrongSolutions(objectMapper.readerForListOf(AiResponseDTO.ExecutableWrongSolution.class)
+                        .readValue(wrongSolutionsNode));
+            }
+
+            JsonNode testProfilesNode = root.path("test_profiles");
+            if (testProfilesNode.isArray()) {
+                dto.setTestProfiles(objectMapper.readerForListOf(AiResponseDTO.TestProfile.class).readValue(testProfilesNode));
             }
 
             JsonNode validatorNode = root.path("validator_rules");

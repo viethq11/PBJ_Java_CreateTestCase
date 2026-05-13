@@ -12,6 +12,14 @@ import java.util.List;
 public interface TestCaseRepository extends JpaRepository<TestCase, Long> {
     List<TestCase> findByProblemId(Long problemId);
 
+    @Query("""
+            select tc from TestCase tc
+            where (tc.legacyInput is not null and tc.legacyInput <> '')
+               or (tc.legacyOutput is not null and tc.legacyOutput <> '')
+            order by tc.id
+            """)
+    List<TestCase> findLegacyPayloadBatch(org.springframework.data.domain.Pageable pageable);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("delete from TestCase tc where tc.problem.id = :problemId")
     void deleteByProblemId(Long problemId);

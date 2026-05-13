@@ -11,6 +11,8 @@ import org.springframework.transaction.annotation.Propagation;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -259,6 +261,10 @@ public class AiIntegrationService {
             spec.put("output_format", dto.getOutputFormat());
             spec.put("analysis_json", analysisJson == null ? "{}" : analysisJson);
             spec.put("test_plan", dto.getTestPlan());
+            spec.put("bug_classes", dto.getBugClasses());
+            spec.put("wrong_solutions", dto.getWrongSolutions());
+            spec.put("bruteforce_solution", dto.getBruteForceSolution());
+            spec.put("bruteforce_language", dto.getBruteForceLanguage());
             spec.put("validator_rules", dto.getValidatorRules());
             spec.put("size_profiles", Map.of(
                     "small", "tiny valid testcase, preferably N <= 10 when applicable",
@@ -266,6 +272,7 @@ public class AiIntegrationService {
                     "large", "near upper constraints but must finish under 1 second",
                     "stress", "adversarial near max constraints, valid and deterministic"
             ));
+            spec.put("generator_profiles", buildGeneratorProfiles(dto));
             spec.put("safety_contract", Map.of(
                     "node_indexing", "Use 1-based nodes unless the input_format explicitly says otherwise.",
                     "no_node_zero", true,
@@ -278,6 +285,75 @@ public class AiIntegrationService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to build generator spec JSON", e);
         }
+    }
+
+    private Map<String, String> buildGeneratorProfiles(AiResponseDTO dto) {
+        Map<String, String> profiles = new LinkedHashMap<>();
+        if (dto.getTestProfiles() != null) {
+            for (AiResponseDTO.TestProfile profile : dto.getTestProfiles()) {
+                if (profile == null || profile.getName() == null || profile.getName().isBlank()) continue;
+                String objective = profile.getObjective();
+                String difficulty = profile.getDifficulty();
+                profiles.put(profile.getName(),
+                        (objective == null || objective.isBlank() ? "targeted adversarial coverage" : objective)
+                                + (difficulty == null || difficulty.isBlank() ? "" : " [" + difficulty + "]"));
+            }
+        }
+
+        if (profiles.isEmpty()) {
+            for (String name : defaultProfileNames(dto)) {
+                profiles.put(name, defaultProfileDescription(name));
+            }
+        }
+        return profiles;
+    }
+
+    private List<String> defaultProfileNames(AiResponseDTO dto) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        names.add("edge_boundary");
+        names.add("random_small");
+        names.add("random_large");
+        names.add("stress_performance");
+
+        if (dto.getBugClasses() != null) {
+            for (AiResponseDTO.BugClass bugClass : dto.getBugClasses()) {
+                if (bugClass == null || bugClass.getName() == null) continue;
+                String upper = bugClass.getName().toUpperCase(Locale.ROOT);
+                if (upper.contains("OVERFLOW")) names.add("overflow_int32");
+                if (upper.contains("INT64") || upper.contains("BIGINTEGER")) names.add("overflow_int64_if_relevant");
+                if (upper.contains("GREEDY")) {
+                    names.add("anti_greedy_small");
+                    names.add("tie_breaking");
+                }
+            }
+        }
+
+        if (dto.getWrongSolutions() != null) {
+            for (AiResponseDTO.ExecutableWrongSolution wrong : dto.getWrongSolutions()) {
+                if (wrong == null || wrong.getType() == null) continue;
+                String type = wrong.getType().toLowerCase(Locale.ROOT);
+                if (type.contains("overflow")) names.add("overflow_int32");
+                if (type.contains("greedy")) names.add("anti_greedy_small");
+                if (type.contains("boundary")) names.add("edge_boundary");
+            }
+        }
+
+        return new ArrayList<>(names);
+    }
+
+    private String defaultProfileDescription(String name) {
+        return switch (name) {
+            case "edge_boundary" -> "minimum/maximum valid values and boundary-sensitive structure";
+            case "overflow_int32" -> "force accumulated values above 2^31-1 when relevant";
+            case "overflow_int64_if_relevant" -> "force accumulated values near or above 2^63-1 when relevant";
+            case "anti_greedy_small" -> "small counterexamples that defeat natural greedy choices";
+            case "tie_breaking" -> "equal local choices where only one direction is globally correct";
+            case "random_small" -> "tiny random cases suitable for brute-force cross-checking";
+            case "random_large" -> "large randomized valid cases near realistic limits";
+            case "stress_performance" -> "near-maximum performance traps for slow but correct approaches";
+            case "adversarial_structure" -> "structured cases such as monotone, all-equal, alternating, sparse, or chain-like";
+            default -> "targeted adversarial coverage";
+        };
     }
 
     private String generateHash(String input) {

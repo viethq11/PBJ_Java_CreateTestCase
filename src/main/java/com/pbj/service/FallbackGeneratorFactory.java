@@ -89,6 +89,15 @@ public class FallbackGeneratorFactory {
                     return max(lo, min(value, hi));
                 }
 
+                string normalizeProfile(string profile) {
+                    for (char& ch : profile) ch = (char)tolower(ch);
+                    if (profile == "edge_boundary" || profile == "random_small" || profile == "anti_greedy_small" || profile == "tie_breaking") return "small";
+                    if (profile == "random_large" || profile == "adversarial_structure") return "large";
+                    if (profile == "overflow_int32" || profile == "overflow_int64_if_relevant" || profile == "stress_performance") return "stress";
+                    if (profile == "medium" || profile == "large" || profile == "stress" || profile == "small") return profile;
+                    return "small";
+                }
+
                 long long chooseCount(const string& size, long long lo, long long hi) {
                     if (hi < lo) hi = lo;
                     long long target = 5;
@@ -110,7 +119,8 @@ public class FallbackGeneratorFactory {
 
                 int main(int argc, char** argv) {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
-                    string size = argc > 2 ? argv[2] : "small";
+                    string profile = argc > 2 ? argv[2] : "random_small";
+                    string size = normalizeProfile(profile);
                     mt19937 rng(seed);
                     unordered_map<string, long long> vars;
                     auto getVar = [&](const string& name, long long fallback) -> long long {
@@ -507,7 +517,10 @@ public class FallbackGeneratorFactory {
                 using namespace std;
                 int main(int argc, char** argv) {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
-                    string size = argc > 2 ? argv[2] : "small";
+                    string profile = argc > 2 ? argv[2] : "random_small";
+                    string size = (profile == "overflow_int32" || profile == "overflow_int64_if_relevant" || profile == "stress_performance") ? "stress"
+                            : (profile == "random_large" || profile == "adversarial_structure") ? "large"
+                            : (profile == "medium") ? "medium" : "small";
                     mt19937 rng(seed);
                     int limit = %d;
                     int n = min(5, limit);
@@ -535,7 +548,10 @@ public class FallbackGeneratorFactory {
                 using namespace std;
                 int main(int argc, char** argv) {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
-                    string size = argc > 2 ? argv[2] : "small";
+                    string profile = argc > 2 ? argv[2] : "random_small";
+                    string size = (profile == "overflow_int32" || profile == "overflow_int64_if_relevant" || profile == "stress_performance") ? "stress"
+                            : (profile == "random_large" || profile == "adversarial_structure") ? "large"
+                            : (profile == "medium") ? "medium" : "small";
                     mt19937 rng(seed);
                     int limit = %d;
                     int n = min(5, limit);
@@ -562,7 +578,10 @@ public class FallbackGeneratorFactory {
                 using namespace std;
                 int main(int argc, char** argv) {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
-                    string size = argc > 2 ? argv[2] : "small";
+                    string profile = argc > 2 ? argv[2] : "random_small";
+                    string size = (profile == "overflow_int32" || profile == "overflow_int64_if_relevant" || profile == "stress_performance") ? "stress"
+                            : (profile == "random_large" || profile == "adversarial_structure") ? "large"
+                            : (profile == "medium") ? "medium" : "small";
                     mt19937 rng(seed);
                     int limit = %d;
                     int n = min(5, limit);
@@ -596,7 +615,10 @@ public class FallbackGeneratorFactory {
                 using namespace std;
                 int main(int argc, char** argv) {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
-                    string size = argc > 2 ? argv[2] : "small";
+                    string profile = argc > 2 ? argv[2] : "random_small";
+                    string size = (profile == "overflow_int32" || profile == "overflow_int64_if_relevant" || profile == "stress_performance") ? "stress"
+                            : (profile == "random_large" || profile == "adversarial_structure") ? "large"
+                            : (profile == "medium") ? "medium" : "small";
                     mt19937 rng(seed);
                     int limit = %d;
                     int n = min(5, limit);
@@ -623,7 +645,10 @@ public class FallbackGeneratorFactory {
                 using namespace std;
                 int main(int argc, char** argv) {
                     int seed = argc > 1 ? stoi(argv[1]) : 1;
-                    string size = argc > 2 ? argv[2] : "small";
+                    string profile = argc > 2 ? argv[2] : "random_small";
+                    string size = (profile == "overflow_int32" || profile == "overflow_int64_if_relevant" || profile == "stress_performance") ? "stress"
+                            : (profile == "random_large" || profile == "adversarial_structure") ? "large"
+                            : (profile == "medium") ? "medium" : "small";
                     mt19937 rng(seed);
                     int limit = %d;
                     int n = min(5, limit);

@@ -36,6 +36,12 @@ public class AiResponseDTO {
     @JsonProperty("golden_solution")
     private String goldenSolution;
 
+    @JsonProperty("bruteforce_solution")
+    private String bruteForceSolution;
+
+    @JsonProperty("bruteforce_language")
+    private String bruteForceLanguage;
+
     /** Ngôn ngữ của generator_code: "python" hoặc "cpp" */
     @JsonProperty("generator_language")
     private String generatorLanguage;
@@ -60,6 +66,15 @@ public class AiResponseDTO {
 
     @JsonProperty("test_plan")
     private TestPlan testPlan;
+
+    @JsonProperty("bug_classes")
+    private List<BugClass> bugClasses;
+
+    @JsonProperty("wrong_solutions")
+    private List<ExecutableWrongSolution> wrongSolutions;
+
+    @JsonProperty("test_profiles")
+    private List<TestProfile> testProfiles;
 
     @Data
     public static class TestPlan {
@@ -88,6 +103,58 @@ public class AiResponseDTO {
 
         @JsonProperty("counterexample_strategy")
         private String counterexampleStrategy;
+    }
+
+    @Data
+    public static class BugClass {
+        private String name;
+
+        private String risk;
+
+        @JsonProperty("target_variables")
+        private List<String> targetVariables;
+
+        @JsonProperty("required_tests")
+        private List<String> requiredTests;
+
+        @JsonProperty("counterexample_strategy")
+        private List<String> counterexampleStrategy;
+    }
+
+    @Data
+    public static class ExecutableWrongSolution {
+        private String name;
+
+        private String type;
+
+        private String idea;
+
+        private String code;
+
+        private String language;
+
+        @JsonProperty("expected_to_fail")
+        private Boolean expectedToFail;
+
+        @JsonProperty("killed_by_profiles")
+        private List<String> killedByProfiles;
+    }
+
+    @Data
+    public static class TestProfile {
+        private String name;
+
+        private String objective;
+
+        private String difficulty;
+
+        @JsonProperty("seed_count")
+        private Integer seedCount;
+
+        @JsonProperty("targets_wrong_solutions")
+        private List<String> targetsWrongSolutions;
+
+        private Boolean required;
     }
 
     @Data

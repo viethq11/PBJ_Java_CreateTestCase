@@ -1,250 +1,380 @@
+1. Lỗi biên chỉ số / off-by-one
 
-Nếu đề bài thiếu hoặc mơ hồ ở các phần:
+Đây là nhóm rất phổ biến.
 
-format input/output
-constraints
-guarantee
-edge cases
-hidden invariants
-dữ liệu có âm không
-graph connected không
-tree hay graph thường
-indexing từ 0 hay 1
-multiple test hay single test
+Cần sinh case cho:
 
-thì model gần như phải “đoán”.
+N = 0 nếu đề cho phép
+N = 1
+N = 2
+N = maxN
+index đầu tiên
+index cuối cùng
+query tại biên trái / biên phải
+đoạn [1, 1], [N, N], [1, N]
 
-Và khi model đoán:
+Ví dụ với bài prefix sum:
 
-generator sẽ sinh sai format
-validator sẽ mismatch
-golden solution có thể solve sai problem thật
-testcase yếu vì không biết max constraints thật
+5 3
+1 2 3 4 5
+1 1
+5 5
+1 5
 
-Trong ảnh của bạn, model đã suy luận sai cấu trúc:
+Bắt lỗi sai kiểu:
 
-Expected 5 D values, but got 2
+prefix[r] - prefix[l]
 
-nghĩa là AI:
+thay vì:
 
-không hiểu chính xác format
-hoặc format được mô tả quá thiếu
-hoặc output schema không đủ cứng
+prefix[r] - prefix[l - 1]
+2. Lỗi sort / comparator
 
-Hiện tại pipeline của bạn đang phụ thuộc khá nhiều vào:
+Rất nhiều bài sai do sort sai tiêu chí.
 
-Natural Language Understanding
+Cần sinh:
 
-trong khi Online Judge production-level cần:
+nhiều phần tử bằng nhau
+cần sort tăng nhưng code sort giảm
+sort theo key phụ
+giá trị âm / dương xen kẽ
+case mà sort theo a đúng nhưng sort theo b sai
 
-Formal Problem Specification
+Ví dụ với interval scheduling:
 
-Đây là khác biệt cực lớn.
+4
+1 10
+2 3
+3 4
+4 5
 
-Vấn đề cốt lõi hiện tại
+Nếu tham lam chọn thời điểm bắt đầu sớm nhất sẽ sai.
 
-AI của bạn đang cố làm đồng thời:
+3. Lỗi tie-breaking
 
-1. Hiểu đề
-2. Suy luận constraints
-3. Suy luận input format
-4. Suy luận edge cases
-5. Viết generator
-6. Viết validator
-7. Viết AC solution
-8. Sinh anti-test
+Đây là nhóm cực mạnh để bắt code tưởng đúng.
 
-Chỉ cần sai 1 bước là toàn pipeline hỏng.
+Sinh case có nhiều lựa chọn cùng điểm số:
 
-Hướng đi đúng tiếp theo
-
-Bạn cần chuyển từ:
-
-AI generates everything from vague statement
-
-sang:
-
-AI first reconstructs a FORMAL SPEC
-
-rồi mới generate artifacts.
-
-Kiến trúc đúng cho PBJ Judge
-STAGE 1 — Problem Reconstruction
-
-AI KHÔNG generate testcase ngay.
-
-AI chỉ làm:
-
-{
-  "input_format": "...",
-  "output_format": "...",
-  "constraints": {
-    "N": "1 <= N <= 2e5",
-    "Ai": "-1e9 <= Ai <= 1e9"
-  },
-  "multiple_testcases": false,
-  "guarantees": [
-    "graph connected",
-    "tree",
-    "no duplicate edges"
-  ],
-  "corner_cases": [
-    "N=1",
-    "all equal",
-    "strictly increasing"
-  ]
-}
-
-Nếu confidence thấp:
-
-bắt AI trả "unknown"
-KHÔNG generate generator
-STAGE 2 — Schema Validation
-
-Backend kiểm tra:
-
-- Có input format chưa?
-- Có constraints chưa?
-- Có variable undefined không?
-- Constraints có parse được không?
-
-Nếu fail:
-
-yêu cầu AI repair SPEC
-chưa cho generate testcase
-STAGE 3 — Generator Synthesis
-
-Lúc này mới prompt:
-
-Generate generator ONLY from THIS schema.
-DO NOT infer new variables.
-DO NOT invent constraints.
-STAGE 4 — Self-Consistency Checks
-
-Chạy:
-
-generator
-↓
-validator
-↓
-golden solution
-↓
-WA/TLE probes
-
-Nếu fail:
-
-repair generator
-KHÔNG regenerate toàn bộ problem
-Tại sao test hiện tại yếu
-
-Log này:
-
-Testcases are weak:
-AI-generated slow correct probe still gets AC
-
-cho thấy AI không biết:
-
-Constraint thật lớn tới đâu
-
-nên nó chỉ sinh:
-
-random nhỏ
-random trung bình
-không có adversarial pattern
-
-Ví dụ bài cần:
-
-O(N log N)
-
-nhưng AI chỉ sinh:
-
-N <= 1000
-
-thì:
-
-O(N^2) vẫn AC
-Thứ bạn đang thiếu KHÔNG phải model mạnh hơn
-
-Đây là điểm quan trọng nhất.
-
-Model mạnh hơn chỉ cải thiện:
-
-Natural language understanding
-
-nhưng KHÔNG giải quyết triệt để:
-
-underspecified problems
-
-Ngay cả GPT-5/Gemini 2.5 Pro cũng sẽ hallucinate nếu đề thiếu constraints.
-
-Thứ cần thêm vào pipeline
-1. Formal Spec Layer (QUAN TRỌNG NHẤT)
-
-Đây là bước bắt buộc.
-
-2. Constraint Inference Engine
+nhiều đường đi cùng độ dài
+nhiều phần tử cùng giá trị
+nhiều interval cùng end time
+nhiều node cùng distance
+nhiều đáp án tối ưu
 
 Ví dụ:
 
-Nếu AI detect:
+4 4
+1 2 1
+1 3 1
+2 4 1
+3 4 1
 
-N up to 2e5
+Nếu bài yêu cầu in đường đi từ điển nhỏ nhất, code Dijkstra thường có thể sai nếu không xử lý tie.
 
-thì backend tự sinh:
+4. Lỗi đồ thị không liên thông
 
-anti_quadratic_tests = true
-3. Deterministic Validator Generator
+Với bài graph, bắt buộc có:
 
-AI phải sinh:
-
-bool validate(input)
-
-Backend chạy validator trước khi lưu testcase.
-
-4. Pattern-Based Adversarial Library
-
-KHÔNG phụ thuộc AI hoàn toàn.
+đồ thị rỗng cạnh
+đồ thị nhiều component
+đỉnh cô lập
+không có đường đi từ s đến t
+có self-loop
+có multi-edge
+chu trình
+cây
+đồ thị đầy đủ nhỏ
 
 Ví dụ:
 
-sorted
-reverse sorted
-all equal
-star graph
-chain graph
-dense graph
-duplicate-heavy
-max frequency
-overflow traps
+5 2
+1 2
+3 4
 
-Backend tự inject.
+Bắt lỗi code mặc định rằng mọi đỉnh đều reachable.
 
-Kiến trúc production-level thực tế
+5. Lỗi với trọng số đặc biệt
 
-Các OJ lớn không dùng:
+Với graph / DP / shortest path:
 
-AI → testcase trực tiếp
+weight = 0
+weight = 1
+weight rất lớn
+nhiều cạnh cùng trọng số
+cạnh âm nếu đề cho phép
+chu trình âm nếu đề liên quan Bellman-Ford
 
-Mà là:
+Nếu bài shortest path có trọng số 0, nhiều code BFS thường sai nếu tưởng mọi cạnh đều bằng 1.
 
-Problem Spec
-→ handwritten validator
-→ handwritten generator
-→ stress testing
-→ checker
+6. Lỗi do input có giá trị âm
 
-AI chỉ nên:
+Nếu đề cho phép số âm, cần sinh:
 
-hỗ trợ generate draft
-hỗ trợ detect missing constraints
-hỗ trợ tạo anti-patterns
+toàn số âm
+âm + dương xen kẽ
+tổng bằng 0
+max subarray toàn âm
+giá trị min rất nhỏ
 
-KHÔNG nên là source of truth duy nhất.
+Ví dụ với maximum subarray:
 
-Hiện tại dự án của bạn đã vượt qua giai đoạn “demo AI judge” rồi. Vấn đề bây giờ là chuyển sang:
+5
+-5 -2 -8 -1 -3
 
-Reliable Judge Infrastructure
+Nhiều code trả 0, trong khi đáp án đúng là -1.
 
-và bước đầu tiên chính là:
+7. Lỗi modulo
 
-Formal Problem Specification Layer
+Các bài yêu cầu modulo rất dễ sai.
+
+Cần sinh:
+
+kết quả nhỏ hơn MOD
+kết quả đúng bằng MOD
+kết quả lớn hơn MOD rất nhiều
+có phép trừ modulo
+có nhân modulo
+
+Bắt lỗi:
+
+(a - b) % MOD
+
+trả số âm.
+
+Cần ép case:
+
+a < b
+
+để yêu cầu dùng:
+
+(a - b + MOD) % MOD
+8. Lỗi precision / số thực
+
+Nếu bài có double, cần test:
+
+số rất nhỏ
+số rất lớn
+kết quả gần ngưỡng so sánh
+case cần epsilon
+case làm tròn
+
+Ví dụ:
+
+0.1 + 0.2
+
+Không nên so sánh trực tiếp bằng ==.
+
+9. Lỗi do nhiều đáp án đúng
+
+Nếu bài cho phép nhiều output hợp lệ, hệ thống không nên so sánh string tuyệt đối.
+
+Ví dụ:
+
+In ra một đường đi bất kỳ ngắn nhất.
+In ra một cách chia bất kỳ.
+In ra một thứ tự topo bất kỳ.
+
+Lúc này cần có special checker, không chỉ expected output cố định.
+
+Đây là cải tiến rất quan trọng cho Online Judge. Hiện hệ thống của bạn đang chạy code rồi so sánh output thực tế với expected output , nên nếu bài có nhiều đáp án đúng thì cần thêm checker riêng.
+
+10. Lỗi format output
+
+Nhiều bài sai vì format:
+
+thiếu newline
+thừa space
+in hoa / thường sai
+in YES/NO sai định dạng
+in số chữ số thập phân sai
+
+Nên backend có chính sách rõ:
+
+strict checker
+token checker
+floating checker
+custom checker
+
+Không phải bài nào cũng dùng cùng một kiểu so sánh.
+
+11. Lỗi hiệu năng nhưng không TLE rõ ràng
+
+Ngoài TLE probe, nên có nhóm test bắt thuật toán sai độ phức tạp:
+
+O(N^2) với N = 5000
+O(NM) với N, M lớn
+DFS đệ quy sâu
+Dijkstra dùng O(N^2) trên graph lớn
+sort trong mỗi query
+
+Ví dụ:
+
+N = 200000
+Q = 200000
+
+Bắt code xử lý mỗi query O(N).
+
+12. Lỗi stack overflow / recursion depth
+
+Với DFS, cây, graph:
+
+cây dạng dây dài
+graph đường thẳng 1-2-3-...-N
+recursion depth = 100000
+
+Bắt lỗi C++ DFS đệ quy bị stack overflow.
+
+Ví dụ:
+
+100000
+1 2
+2 3
+3 4
+...
+99999 100000
+13. Lỗi memory limit
+
+Sinh case làm code dùng quá nhiều bộ nhớ:
+
+N lớn
+M lớn
+ma trận N x N không thể lưu
+DP 2D không cần thiết
+vector quá lớn
+
+Ví dụ bài graph với:
+
+N = 100000
+M = 200000
+
+Nếu code dùng adjacency matrix N x N sẽ chết bộ nhớ.
+
+14. Lỗi đọc input
+
+Nên sinh case kiểm tra:
+
+nhiều test cases T
+T = 1
+T lớn
+dòng trống nếu đề cho phép
+string có khoảng trắng
+ký tự đặc biệt
+input rất dài
+
+Ví dụ nếu có T, nhiều code quên loop theo T.
+
+3
+...
+...
+...
+15. Lỗi với duplicate data
+
+Rất quan trọng cho map, set, sort, binary search.
+
+toàn phần tử giống nhau
+nhiều phần tử trùng
+duplicate key
+duplicate edge
+duplicate query
+
+Ví dụ:
+
+6
+5 5 5 5 5 5
+
+Bắt lỗi code dùng set làm mất số lần xuất hiện.
+
+16. Lỗi binary search
+
+Với bài binary search answer, cần sinh:
+
+answer = min possible
+answer = max possible
+answer nằm sát biên
+predicate đổi từ false sang true đúng một lần
+case không có đáp án
+case tất cả đều hợp lệ
+
+Bắt lỗi:
+
+while (l < r)
+mid = (l + r) / 2
+
+hoặc cập nhật l, r sai.
+
+17. Lỗi DP base case
+
+Với bài DP, cần sinh:
+
+N = 0 / 1 / 2
+không chọn gì
+chọn tất cả
+trạng thái không thể đạt
+giá trị âm
+nhiều cách đạt cùng đáp án
+
+Ví dụ knapsack:
+
+3 0
+1 10
+2 20
+3 30
+
+Capacity bằng 0, đáp án phải là 0.
+
+18. Lỗi do assumption sai về dữ liệu
+
+AI nên phát hiện và sinh test chống các giả định sai:
+
+input không được sort sẵn
+graph không chắc liên thông
+giá trị không chắc distinct
+answer không chắc tồn tại
+start không chắc là 1
+N không chắc > 1
+
+Ví dụ bài yêu cầu xử lý mảng, đừng chỉ sinh mảng đã sort.
+
+Nên thêm vào app dưới dạng testcase profile
+
+Bạn có thể mở rộng từ:
+
+small
+medium
+large
+stress
+
+thành:
+
+boundary
+overflow
+anti_greedy
+duplicate
+negative_values
+tie_breaking
+disconnected_graph
+deep_recursion
+memory_stress
+time_complexity_trap
+modulo_trap
+precision_trap
+multi_answer_checker
+binary_search_boundary
+dp_base_case
+random_small_bruteforce
+random_large
+Nhóm quan trọng nhất nên làm trước
+
+Theo mức độ lợi ích, tôi khuyên ưu tiên:
+
+1. overflow
+2. anti_greedy
+3. off_by_one
+4. duplicate / tie_breaking
+5. disconnected graph
+6. negative values
+7. time complexity trap
+8. recursion depth
+9. modulo trap
+10. special checker cho bài nhiều đáp án

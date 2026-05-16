@@ -298,7 +298,13 @@ public class ProblemService {
         String goldenCode = resolveGoldenSolution(problem, dto);
         if (goldenCode == null || goldenCode.isBlank()) {
             if (!requireGoldenCode) {
-                saveEdgeCases(problem, dto.getEdgeCases(), goldenCode, new RejectionStats());
+                saveEdgeCases(
+                        problem,
+                        dto.getEdgeCases(),
+                        goldenCode,
+                        buildReferenceOracles(problem, dto),
+                        new RejectionStats(),
+                        new GenerationQualitySummary());
                 aiIntegrationService.saveValidatedTestGeneration(description, base64Images, GENERATOR_RUNS.length, dto);
                 return;
             }
@@ -350,6 +356,7 @@ public class ProblemService {
     private GenerationOutcome generateTestCasesFromCode(Problem problem, AiResponseDTO dto, String goldenCode) {
         String generatorCode     = prepareValidGenerator(dto);
         String generatorLanguage = dto.getGeneratorLanguage() != null ? dto.getGeneratorLanguage() : "python";
+        ReferenceOracles oracles = buildReferenceOracles(problem, dto);
 
         Set<String> fingerprints = new HashSet<>();
         AtomicInteger savedCount = new AtomicInteger(0);
@@ -359,7 +366,7 @@ public class ProblemService {
         quality.hasBruteForceArtifact = dto.getBruteForceSolution() != null && !dto.getBruteForceSolution().isBlank();
 
         // 1. Manually crafted edge cases first
-        savedCount.addAndGet(saveEdgeCases(problem, dto.getEdgeCases(), goldenCode, rejectionStats));
+        savedCount.addAndGet(saveEdgeCases(problem, dto.getEdgeCases(), goldenCode, oracles, rejectionStats, quality));
 
         // 2. Generator-based cases
         if (generatorCode != null && !generatorCode.isBlank()) {
@@ -400,6 +407,14 @@ public class ProblemService {
                     continue;
                 }
                 String expectedOutput = goldenResult.output;
+                if (isBruteForceFriendlyProfile(profile)) {
+                    requireBruteForceAgreement(
+                            oracles,
+                            generatedInput,
+                            expectedOutput,
+                            "generator testcase profile=" + profile + " seed=" + seed,
+                            quality);
+                }
 
                 if (!isUniqueTestCase(generatedInput, expectedOutput, fingerprints)) {
                     rejectionStats.duplicate++;
@@ -420,7 +435,8 @@ public class ProblemService {
         savedCount.addAndGet(adversarialCount);
 
         int minedCount = saveProbeKillerCases(
-                problem, dto, goldenCode, generatorCode, generatorLanguage, fingerprints, savedCount.get() + 1, quality);
+                problem, dto, goldenCode, oracles, generatorCode, generatorLanguage,
+                fingerprints, savedCount.get() + 1, quality);
         savedCount.addAndGet(minedCount);
 
         if (generatorCode != null && !generatorCode.isBlank()
@@ -446,18 +462,13 @@ public class ProblemService {
     }
 
     private int saveProbeKillerCases(Problem problem, AiResponseDTO dto, String goldenCode,
-                                     String generatorCode, String generatorLanguage,
+                                     ReferenceOracles oracles, String generatorCode, String generatorLanguage,
                                      Set<String> fingerprints, int startSeq,
                                      GenerationQualitySummary quality) {
         if (generatorCode == null || generatorCode.isBlank()) return 0;
 
         List<AiResponseDTO.ExecutableWrongSolution> probes = executableWrongSolutions(dto);
         if (probes.isEmpty()) return 0;
-
-        String bruteForceCode = dto.getBruteForceSolution();
-        String bruteForceLanguage = normalizeProbeLanguage(dto.getBruteForceLanguage());
-        boolean hasBruteForce = bruteForceCode != null && !bruteForceCode.isBlank();
-        int bruteForceTimeLimit = Math.max(3000, Math.min(10_000, problem.getTimeLimit() * 3));
 
         int saved = 0;
         for (Map.Entry<String, Integer> run : buildProbeMiningProfiles(dto).entrySet()) {
@@ -480,18 +491,13 @@ public class ProblemService {
                 if (!goldenResult.success) continue;
                 String goldenOutput = goldenResult.output;
 
-                if (hasBruteForce && isBruteForceFriendlyProfile(profile)) {
-                    String bruteForceOutput = codeExecutionService.runGoldenSolution(
-                            bruteForceCode, bruteForceLanguage, input, bruteForceTimeLimit);
-                    if (bruteForceOutput == null || bruteForceOutput.isBlank()) {
-                        continue;
-                    }
-                    if (!normalizedOutputEquals(goldenOutput, bruteForceOutput)) {
-                        throw new IllegalStateException(
-                                "Golden solution disagrees with brute-force checker on profile=" + profile
-                                        + " seed=" + seed + ". This indicates the reference solution or spec is inconsistent.");
-                    }
-                    quality.bruteForceVerifiedCases++;
+                if (isBruteForceFriendlyProfile(profile)) {
+                    requireBruteForceAgreement(
+                            oracles,
+                            input,
+                            goldenOutput,
+                            "probe-killer testcase profile=" + profile + " seed=" + seed,
+                            quality);
                 }
 
                 Set<String> killed = killedProbeNames(problem, probes, input, goldenOutput);
@@ -641,7 +647,8 @@ public class ProblemService {
     }
 
     private int saveEdgeCases(Problem problem, List<AiResponseDTO.TestCaseDTO> edgeCases,
-                              String goldenCode, RejectionStats rejectionStats) {
+                              String goldenCode, ReferenceOracles oracles,
+                              RejectionStats rejectionStats, GenerationQualitySummary quality) {
         if (edgeCases == null || edgeCases.isEmpty()) return 0;
 
         int saved = 0;
@@ -666,10 +673,19 @@ public class ProblemService {
                     if (rejectionStats != null) {
                         rejectionStats.recordGoldenFailure(goldenResult.message);
                     }
-                    expectedOutput = ec.getExpectedOutput();
+                    continue;
                 }
+                requireBruteForceAgreement(
+                        oracles,
+                        input,
+                        expectedOutput,
+                        "manual edge testcase #" + (saved + 1),
+                        quality);
             } else {
-                expectedOutput = ec.getExpectedOutput();
+                if (rejectionStats != null) {
+                    rejectionStats.recordGoldenFailure("No trusted golden solution available for manual edge testcase.");
+                }
+                continue;
             }
 
             if (expectedOutput == null || expectedOutput.isBlank()) {
@@ -683,6 +699,9 @@ public class ProblemService {
                     problem, input, expectedOutput,
                     Boolean.TRUE.equals(ec.getIsSample()), saved + 1);
             saved++;
+            if (quality != null) {
+                quality.acceptedProfiles.add("edge_boundary");
+            }
         }
         return saved;
     }
@@ -773,6 +792,15 @@ public class ProblemService {
         }
     }
 
+    private ReferenceOracles buildReferenceOracles(Problem problem, AiResponseDTO dto) {
+        String bruteForceCode = dto == null ? null : dto.getBruteForceSolution();
+        String bruteForceLanguage = normalizeProbeLanguage(dto == null ? null : dto.getBruteForceLanguage());
+        boolean hasBruteForce = bruteForceCode != null && !bruteForceCode.isBlank();
+        int baseTimeLimit = problem == null || problem.getTimeLimit() == null ? 2000 : problem.getTimeLimit();
+        int bruteForceTimeLimit = Math.max(3000, Math.min(10_000, baseTimeLimit * 3));
+        return new ReferenceOracles(bruteForceCode, bruteForceLanguage, hasBruteForce, bruteForceTimeLimit);
+    }
+
     private String toJson(Object value) {
         if (value == null) return null;
         try {
@@ -784,17 +812,18 @@ public class ProblemService {
     }
 
     private String resolveGoldenSolution(Problem problem, AiResponseDTO dto) {
+        if (problem.getAcceptedSolutionCode() != null && !problem.getAcceptedSolutionCode().isBlank()) {
+            System.out.println("INFO: Using stored AC reference solution from DB.");
+            return problem.getAcceptedSolutionCode();
+        }
         if (dto.getGoldenSolution() != null && !dto.getGoldenSolution().isBlank()) {
             if (!looksLikeCxxProgram(dto.getGoldenSolution())) {
                 System.err.println("WARN: Ignoring non-compilable-looking AI golden_solution artifact.");
             } else {
-                System.out.println("INFO: Using golden solution from AI analysis response.");
+                System.err.println(
+                        "WARN: Falling back to AI-provided golden_solution. It will be accepted only after brute-force agreement on every small/edge testcase.");
                 return dto.getGoldenSolution();
             }
-        }
-        if (problem.getAcceptedSolutionCode() != null && !problem.getAcceptedSolutionCode().isBlank()) {
-            System.out.println("INFO: Using stored AC reference solution from DB.");
-            return problem.getAcceptedSolutionCode();
         }
         System.out.println("INFO: No golden solution in AI artifact; standalone AC code generation is disabled.");
         return null;
@@ -1143,6 +1172,33 @@ public class ProblemService {
         return lower.contains("small") || lower.contains("tie") || lower.contains("boundary");
     }
 
+    private void requireBruteForceAgreement(ReferenceOracles oracles, String input, String goldenOutput,
+                                            String testcaseLabel, GenerationQualitySummary quality) {
+        if (oracles == null || !oracles.hasBruteForce()) {
+            throw new IllegalStateException(
+                    "Missing brute-force oracle for " + testcaseLabel
+                            + ". Every small/edge testcase must be verified against brute force before saving.");
+        }
+
+        CodeExecutionService.GoldenResult bruteForceResult = codeExecutionService.runGoldenSolutionDetailed(
+                oracles.bruteForceCode(),
+                oracles.bruteForceLanguage(),
+                input,
+                oracles.bruteForceTimeLimit());
+        if (!bruteForceResult.success) {
+            throw new IllegalStateException(
+                    "Brute-force oracle failed on " + testcaseLabel + ": " + bruteForceResult.message);
+        }
+        if (!normalizedOutputEquals(goldenOutput, bruteForceResult.output)) {
+            throw new IllegalStateException(
+                    "Golden solution disagrees with brute-force oracle on " + testcaseLabel
+                            + ". Rejecting testcase generation because the reference output is not trustworthy.");
+        }
+        if (quality != null) {
+            quality.bruteForceVerifiedCases++;
+        }
+    }
+
     private Set<String> killedProbeNames(Problem problem, List<AiResponseDTO.ExecutableWrongSolution> probes,
                                          String input, String expectedOutput) {
         Set<String> killed = new LinkedHashSet<>();
@@ -1231,6 +1287,11 @@ public class ProblemService {
         if (normalized.equals("py") || normalized.equals("python3")) return "python";
         return normalized;
     }
+
+    private record ReferenceOracles(String bruteForceCode,
+                                    String bruteForceLanguage,
+                                    boolean hasBruteForce,
+                                    int bruteForceTimeLimit) {}
 
     private record GenerationOutcome(int savedCount, GenerationQualitySummary quality) {}
 

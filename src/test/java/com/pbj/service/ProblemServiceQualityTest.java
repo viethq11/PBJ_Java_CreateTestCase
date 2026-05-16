@@ -1,6 +1,7 @@
 package com.pbj.service;
 
 import com.pbj.dto.AiResponseDTO;
+import com.pbj.entity.Problem;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
@@ -141,6 +142,21 @@ class ProblemServiceQualityTest {
                 "adversarial_structure",
                 "stress_performance"
         );
+    }
+
+    @Test
+    void resolveGoldenSolutionPrefersStoredAcceptedSolutionOverAiArtifact() throws Exception {
+        Problem problem = new Problem();
+        problem.setAcceptedSolutionCode("#include <bits/stdc++.h>\nint main(){return 0;}");
+
+        AiResponseDTO dto = new AiResponseDTO();
+        dto.setGoldenSolution("#include <bits/stdc++.h>\nint main(){return 1;}");
+
+        Method method = ProblemService.class.getDeclaredMethod("resolveGoldenSolution", Problem.class, AiResponseDTO.class);
+        method.setAccessible(true);
+        String resolved = (String) method.invoke(service, problem, dto);
+
+        assertThat(resolved).isEqualTo(problem.getAcceptedSolutionCode());
     }
 
     private AiResponseDTO.ExecutableWrongSolution probe(String name, String type) {

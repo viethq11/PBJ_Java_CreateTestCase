@@ -97,7 +97,7 @@ public class GeminiTestGenerationService {
                 in the relevant field instead of guessing. The backend will request a repair instead of using guessed artifacts.
                 Do not introduce concepts, input sections, variables, or constraints that are absent from the original problem.
                 Examples of forbidden drift: inventing DAG/A[i]/s,t for a graph-edge problem that only has u,v,W,type.
-                The backend owns taxonomy-specific testcase strategy and generator code. Your job is metadata extraction.
+                Your job is normalized specification extraction plus executable testcase artifacts.
 
                 Original problem:
                 %s
@@ -111,20 +111,24 @@ public class GeminiTestGenerationService {
 
                 ABSOLUTE RULE #2 — TESTCASE ARTIFACTS ONLY
                 Return ONLY normalized formal specification and testcase-generation artifacts.
-                Do NOT generate standalone user-facing AC/WA/TLE submissions.
-                Provide golden_solution only as an internal C++17 reference oracle used to compute expected testcase outputs.
-                The golden_solution must implement the intended optimal algorithm from the statement/test_plan.
-                It must be a complete compilable C++17 program with #include directives, using namespace/std qualifiers,
-                int main(), stdin parsing exactly matching input_schema, and stdout formatting exactly matching output_format.
-                Never put placeholder prose such as "C++17 internal reference solution" in golden_solution.
+                Do NOT generate standalone user-facing AC submissions.
+                The only executable artifacts you may generate are:
+                - generator_code
+                - validator_code
+                - bruteforce_solution
+                - wrong_solutions[].code
+                golden_solution must always be an empty string.
+                Do not manually compute or invent expected outputs for edge_cases.
+                The bruteforce_solution must be a complete compilable program for tiny/small cases only,
+                matching input_schema exactly and producing authoritative output for small/edge verification.
+                wrong_solutions[].code must be plausible incorrect or slow programs that the generated tests should kill.
                 Do not simulate games, exponent towers, or processes step-by-step when constraints require a formula,
-                modular arithmetic, dynamic programming, or logarithmic/linear-time reasoning.
-                generator_code, validator_code, bruteforce_solution, and wrong_solutions[].code must be empty strings.
+                modular arithmetic, dynamic programming, or logarithmic/linear-time reasoning, unless the artifact is explicitly bruteforce_solution.
 
                 ABSOLUTE RULE #3 — BUG-ORIENTED VALIDATION GATES
                 Do not design tests around a vague quality score. Design them so the backend validation gates can pass:
-                generator pass, validator pass, golden-solution pass, WA probe separation, TLE/complexity probe separation,
-                and required profile coverage.
+                generator pass, validator pass, trusted-reference pass, WA probe separation, TLE/complexity probe separation,
+                mandatory golden-vs-bruteforce agreement on every small/edge testcase, and required profile coverage.
                 Include named test-family functions that target likely wrong solutions from analysis_json.
                 Include complexity probes that kill brute-force/TLE approaches under max constraints.
                 Use numeric extremes near min/max constraints, e.g. 10^9, -10^9, and 64-bit sums.
@@ -135,10 +139,9 @@ public class GeminiTestGenerationService {
                 Output ONLY a valid JSON object. No markdown.
                 Inside string values, represent newlines using literal \\n.
                 Inside string values, escape all double-quotes as \\" and all backslashes as \\\\.
-                Because code is forbidden in this phase:
                 - Do not include *_b64 fields.
-                - Keep generator_code, validator_code, bruteforce_solution, and wrong_solutions[].code empty.
-                - golden_solution may contain only the internal C++17 reference oracle, not a user-facing generated answer.
+                - golden_solution must be an empty string.
+                - Every code field must be raw source code only, with no markdown fences or explanations.
 
                 ABSOLUTE RULE #5 — VIETNAMESE USER-FACING STATEMENT
                 The user-facing problem statement fields MUST be written in Vietnamese:
@@ -280,9 +283,9 @@ public class GeminiTestGenerationService {
                   ],
                   "total_testcases": %d,
                   "generator_language": "cpp",
-                  "generator_code": "",
-                  "golden_solution": "C++17 internal reference solution used only to compute testcase outputs",
-                  "bruteforce_solution": "",
+                  "generator_code": "Complete generator source code",
+                  "golden_solution": "",
+                  "bruteforce_solution": "Complete brute force source code for tiny/small cases",
                   "bruteforce_language": "cpp",
                   "validator_rules": ["rule 1", "rule 2"],
                   "generation_strategy": {
@@ -292,7 +295,7 @@ public class GeminiTestGenerationService {
                     "stress_cases": true
                   },
                   "edge_cases": [
-                    {"input": "small input", "expected_output": "expected output", "is_sample": true}
+                    {"input": "small input", "expected_output": "", "is_sample": true}
                   ]
                 }
 
@@ -323,16 +326,22 @@ public class GeminiTestGenerationService {
                 - If the statement is missing required format/constraint facts, mark them as "unknown"; do not invent them.
                 
                 edge_cases: at most 3 tiny manually written cases. No huge raw data.
+                - expected_output must be an empty string; the backend will compute it from the trusted oracle and cross-check small/edge cases with bruteforce_solution.
                 checker_code: empty string for unique-output problems.
                 wrong_solutions requirements:
                 - Provide at least 3 plausible wrong-solution metadata entries when feasible: overflow, greedy, boundary/off-by-one.
-                - code must be an empty string; the backend may generate executable probes separately.
+                - code should contain a compilable incorrect or slow probe whenever feasible; the backend will execute these probes directly.
                 - Keep wrong solutions concise but complete.
                 - Use exact type names from this set whenever relevant: overflow, greedy, boundary, off_by_one, brute_force, tle.
                 - If bug_classes includes overflow, include at least one wrong_solution metadata entry with type="overflow".
                 - If bug_classes includes greedy, include at least one wrong_solution metadata entry with type="greedy".
                 - If a slow brute-force approach is plausible, include one wrong_solution metadata entry with type="tle" or "brute_force".
                 - For each wrong_solution, set killed_by_profiles to the most likely testcase profiles that should defeat it.
+                executable artifact requirements:
+                - generator_code may be empty only if you genuinely cannot derive a safe generator from the statement.
+                - validator_code may be empty only if input_schema is sufficient for the backend to rebuild it exactly.
+                - bruteforce_solution is mandatory whenever small/exhaustive or boundary verification is feasible.
+                - Never output golden_solution code.
                 test_profiles requirements:
                 - Use these structured profile names when possible:
                   SAMPLE, SMALL_EXHAUSTIVE, BOUNDARY_MIN, BOUNDARY_MAX,

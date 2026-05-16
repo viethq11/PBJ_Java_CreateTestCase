@@ -11,6 +11,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GeminiTestGenerationServiceTest {
 
     @Test
+    void generationPromptDisablesGoldenSolutionAndRequiresBruteforceArtifacts() throws Exception {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        Method method = GeminiTestGenerationService.class.getDeclaredMethod(
+                "buildGenerationPrompt", String.class, String.class, int.class);
+        method.setAccessible(true);
+
+        String prompt = (String) method.invoke(service, "problem", "{}", 10);
+
+        assertThat(prompt).contains("golden_solution must always be an empty string.");
+        assertThat(prompt).contains("bruteforce_solution is mandatory whenever small/exhaustive or boundary verification is feasible.");
+        assertThat(prompt).contains("\"golden_solution\": \"\"");
+    }
+
+    @Test
     void parserNormalizesLoopOfScalarsIntoQueriesSchema() throws Exception {
         String response = """
                 {

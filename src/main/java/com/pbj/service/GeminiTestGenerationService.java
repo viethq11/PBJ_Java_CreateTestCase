@@ -22,13 +22,19 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class GeminiTestGenerationService {
+    private static final Pattern COMMAND_TOKEN_PATTERN = Pattern.compile("\\b(update|query)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SCALAR_HINT_PATTERN = Pattern.compile("\\b([A-Z][A-Z0-9]{0,7})\\b");
 
     @Value("${ai.gemini.api-key:}")
     private String geminiApiKey;
@@ -49,6 +55,9 @@ public class GeminiTestGenerationService {
             .enable(JsonReadFeature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER)
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .build();
+
+    private volatile long lastSuccessfulPreflightAtMs;
+    private static final long GEMINI_PREFLIGHT_TTL_MS = 5 * 60 * 1000L;
 
     public String extractProblemText(String hint, List<String> base64Images) {
         String prompt = """
@@ -73,6 +82,23 @@ public class GeminiTestGenerationService {
         return executeGeminiRequest(Map.of("contents", List.of(Map.of("parts", parts))), "Gemini (OCR Extract)");
     }
 
+    public void verifyApiKeysBeforePipeline() {
+        long now = System.currentTimeMillis();
+        if (now - lastSuccessfulPreflightAtMs < GEMINI_PREFLIGHT_TTL_MS) {
+            return;
+        }
+
+        Map<String, Object> requestBody = Map.of(
+                "contents", List.of(Map.of("parts", List.of(Map.of("text", "Reply with OK.")))),
+                "generationConfig", Map.of(
+                        "temperature", 0,
+                        "maxOutputTokens", 16
+                )
+        );
+        executeGeminiRequest(requestBody, "Gemini API key preflight");
+        lastSuccessfulPreflightAtMs = System.currentTimeMillis();
+    }
+
     public AiResponseDTO generateTestArtifacts(String problemText, String analysisJson, int count) {
         String prompt = buildGenerationPrompt(problemText, analysisJson, count);
         Map<String, Object> requestBody = Map.of(
@@ -86,9 +112,24 @@ public class GeminiTestGenerationService {
         return parseAnalysisResponse(responseText);
     }
 
+    public AiResponseDTO generateReferenceCandidates(String problemText, AiResponseDTO frozenDto) {
+        String prompt = buildReferenceCandidatePrompt(problemText, frozenDto);
+        Map<String, Object> requestBody = Map.of(
+                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
+                "generationConfig", Map.of(
+                        "responseMimeType", "application/json",
+                        "temperature", 0.1
+                )
+        );
+        String responseText = executeGeminiRequest(requestBody, "Gemini (Reference Candidate Recovery)");
+        return parseAnalysisResponse(responseText);
+    }
+
     public AiResponseDTO repairFormalSpec(String problemText, AiResponseDTO brokenDto, String validationError) {
         try {
             String brokenJson = objectMapper.writeValueAsString(brokenDto);
+            String sourceAnchors = buildSourceAnchors(problemText);
+            String forbiddenCommands = buildForbiddenCommandGuidance(problemText);
 
             String prompt = """
                     You are repairing a competitive-programming formal specification JSON.
@@ -114,7 +155,16 @@ public class GeminiTestGenerationService {
                       node indices: 1..N
                       binary flags/types: 0..1
                     - Put uncertainty into validator_rules or assumptions, not into input_schema.
+                    - The original problem statement is the single source of truth. Delete any field, command vocabulary,
+                      or repeated-row structure that is not explicitly supported by the original statement.
+                    - Keep the exact input order and tuple width from the original statement.
                     - golden_solution must be a complete compilable C++ reference solution for the original problem.
+
+                    Source-grounding anchors:
+                    %s
+
+                    Forbidden drift to remove if present:
+                    %s
 
                     Original problem:
                     %s
@@ -123,6 +173,8 @@ public class GeminiTestGenerationService {
                     %s
                     """.formatted(
                     validationError == null ? "" : validationError,
+                    sourceAnchors,
+                    forbiddenCommands,
                     problemText == null ? "" : problemText,
                     brokenJson);
 
@@ -144,6 +196,8 @@ public class GeminiTestGenerationService {
     }
 
     private String buildGenerationPrompt(String problemText, String analysisJson, int count) {
+        String sourceAnchors = buildSourceAnchors(problemText);
+        String forbiddenCommands = buildForbiddenCommandGuidance(problemText);
         return """
                 You are an expert Competitive Programming problem setter and testcase engineer.
                 You will receive the original problem and a short local analysis_json produced by Ollama.
@@ -161,7 +215,12 @@ public class GeminiTestGenerationService {
                 - Put any uncertainty in validator_rules or assumptions, NOT in input_schema.
                 - The constraints field must not contain the words unknown, unspecified, or not specified.
                 Do not introduce concepts, input sections, variables, or constraints that are absent from the original problem.
+                Never introduce command-style operations such as UPDATE/QUERY unless the original problem explicitly uses them.
                 Examples of forbidden drift: inventing DAG/A[i]/s,t for a graph-edge problem that only has u,v,W,type.
+                Source-grounding anchors extracted from the original statement:
+                %s
+                Forbidden drift to avoid:
+                %s
                 Your job is normalized specification extraction plus executable testcase artifacts.
 
                 Original problem:
@@ -440,9 +499,113 @@ public class GeminiTestGenerationService {
                   $x \\le y$, $10^5$, $2^{31}-1$, $a_i$, $O(n \\log n)$.
                 - Never output raw HTML or code fences in user-facing fields.
                 """.formatted(
+                sourceAnchors,
+                forbiddenCommands,
                 problemText == null ? "" : problemText,
                 analysisJson == null ? "{}" : analysisJson,
                 count);
+    }
+
+    private String buildReferenceCandidatePrompt(String problemText, AiResponseDTO frozenDto) {
+        String frozenSpec;
+        try {
+            Map<String, Object> frozenFields = new java.util.LinkedHashMap<>();
+            frozenFields.put("input_format", frozenDto == null || frozenDto.getInputFormat() == null ? "" : frozenDto.getInputFormat());
+            frozenFields.put("output_format", frozenDto == null || frozenDto.getOutputFormat() == null ? "" : frozenDto.getOutputFormat());
+            frozenFields.put("constraints", frozenDto == null || frozenDto.getConstraints() == null ? "" : frozenDto.getConstraints());
+            frozenFields.put("input_schema", frozenDto == null ? null : frozenDto.getInputSchema());
+            frozenFields.put("test_plan", frozenDto == null ? null : frozenDto.getTestPlan());
+            frozenSpec = objectMapper.writeValueAsString(frozenFields);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize frozen reference spec: " + e.getMessage(), e);
+        }
+
+        return """
+                You are generating candidate reference programs for a competitive-programming problem.
+
+                The original problem statement is authoritative.
+                A normalized backend-validated specification is already frozen below.
+                Do NOT reinterpret the task, do NOT change the schema, and do NOT invent missing concepts.
+
+                Original problem:
+                %s
+
+                Frozen normalized specification:
+                %s
+
+                Return ONLY valid JSON with these fields:
+                {
+                  "golden_solution": "Complete compilable C++17 optimized reference solution",
+                  "bruteforce_solution": "Complete compilable C++17 tiny-case oracle",
+                  "bruteforce_language": "cpp"
+                }
+
+                Rules:
+                - golden_solution is only a candidate; the backend will verify it independently.
+                - bruteforce_solution must be intentionally simple and authoritative for tiny/small valid inputs.
+                - Derive both programs from the original statement plus the frozen specification.
+                - Respect input_schema exactly.
+                - Output raw source code only inside each code field; no markdown fences or explanations.
+                - If the optimized solution and brute-force method use the same algorithmic idea, still implement the
+                  brute-force program separately in the simplest direct way feasible for tiny inputs.
+                """.formatted(problemText == null ? "" : problemText, frozenSpec);
+    }
+
+    private String buildSourceAnchors(String problemText) {
+        if (problemText == null || problemText.isBlank()) {
+            return "- No source anchors available.";
+        }
+
+        String normalized = problemText.replace('\r', '\n');
+        String[] lines = normalized.split("\\n+");
+        LinkedHashSet<String> anchors = new LinkedHashSet<>();
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            String lower = trimmed.toLowerCase(Locale.ROOT);
+            if (lower.contains("input")
+                    || lower.contains("output")
+                    || lower.contains("constraint")
+                    || lower.contains("dòng")
+                    || lower.contains("dong")
+                    || lower.contains("mỗi")
+                    || lower.contains("moi")
+                    || lower.contains("gồm")
+                    || lower.contains("gom")
+                    || lower.contains("contains")
+                    || lower.contains("followed by")) {
+                anchors.add("- " + trimmed);
+            }
+            Matcher scalarMatcher = SCALAR_HINT_PATTERN.matcher(trimmed);
+            while (scalarMatcher.find() && anchors.size() < 8) {
+                anchors.add("- Identifier in source: " + scalarMatcher.group(1));
+            }
+            if (anchors.size() >= 8) break;
+        }
+        if (anchors.isEmpty()) {
+            anchors.add("- Problem excerpt: " + normalized.substring(0, Math.min(normalized.length(), 240)).trim());
+        }
+        return String.join("\n", anchors);
+    }
+
+    private String buildForbiddenCommandGuidance(String problemText) {
+        if (problemText == null || problemText.isBlank()) {
+            return "- Do not invent command tokens or operation names.";
+        }
+
+        String lower = problemText.toLowerCase(Locale.ROOT);
+        List<String> forbidden = new ArrayList<>();
+        Matcher matcher = COMMAND_TOKEN_PATTERN.matcher("update query");
+        while (matcher.find()) {
+            String command = matcher.group(1).toLowerCase(Locale.ROOT);
+            if (!lower.matches("(?s).*\\b" + command + "\\b.*")) {
+                forbidden.add("- Remove command token '" + command + "' unless quoted from the source statement.");
+            }
+        }
+        if (forbidden.isEmpty()) {
+            forbidden.add("- No extra command-style operations beyond the source statement.");
+        }
+        return String.join("\n", forbidden);
     }
 
     private AiResponseDTO parseAnalysisResponse(String responseText) {
@@ -586,6 +749,10 @@ public class GeminiTestGenerationService {
 
     private void appendNormalizedLine(ArrayNode target, JsonNode line) {
         String kind = line.path("kind").asText("").trim().toLowerCase();
+        if (kind.equals("tuple") || kind.equals("tuples") || kind.equals("record") || kind.equals("records")) {
+            target.add(normalizeTupleLine(line));
+            return;
+        }
         if (!kind.equals("loop") && !kind.equals("repeat") && !kind.equals("for_each")) {
             target.add(line.deepCopy());
             return;
@@ -619,6 +786,30 @@ public class GeminiTestGenerationService {
             rawLines.set("length", length.deepCopy());
         }
         target.add(rawLines);
+    }
+
+    private JsonNode normalizeTupleLine(JsonNode line) {
+        ObjectNode normalized = line.deepCopy();
+        JsonNode fields = firstPresent(line, "columns", "fields", "items");
+        if (fields.isArray()) {
+            normalized.set("columns", fields.deepCopy());
+            normalized.remove("fields");
+            normalized.remove("items");
+        }
+
+        JsonNode length = firstPresent(line, "length", "count", "times", "repeat");
+        if (!length.isMissingNode() && !length.isNull()) {
+            normalized.put("kind", "queries");
+            normalized.set("length", length.deepCopy());
+            return normalized;
+        }
+
+        normalized.put("kind", "scalars");
+        if (normalized.path("fields").isMissingNode() && normalized.path("columns").isArray()) {
+            normalized.set("fields", normalized.path("columns").deepCopy());
+        }
+        normalized.remove("columns");
+        return normalized;
     }
 
     private ObjectNode tupleLikeLine(String kind, JsonNode length, JsonNode scalarLine) {
@@ -688,9 +879,14 @@ public class GeminiTestGenerationService {
                     HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(requestBody), headers);
                     ResponseEntity<String> response = buildRestTemplate().postForEntity(geminiUrl(apiKey), entity, String.class);
                     JsonNode rootNode = objectMapper.readTree(response.getBody());
-                    return rootNode.path("candidates").get(0)
-                            .path("content").path("parts").get(0)
-                            .path("text").asText();
+                    JsonNode textNode = rootNode.path("candidates").path(0)
+                            .path("content").path("parts").path(0)
+                            .path("text");
+                    if (textNode.isMissingNode() || textNode.asText("").isBlank()) {
+                        throw new IllegalStateException("Gemini returned no text candidate. Response="
+                                + truncate(rootNode.toString(), 500));
+                    }
+                    return textNode.asText();
                 } catch (HttpServerErrorException.ServiceUnavailable | HttpClientErrorException.TooManyRequests e) {
                     String responseBody = truncate(e.getResponseBodyAsString(), 500);
                     System.err.println("WARN: " + errorPrefix + " key " + keyLabel
@@ -721,19 +917,41 @@ public class GeminiTestGenerationService {
                     try { Thread.sleep(sleepMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                 } catch (Exception e) {
                     lastFailure = new RuntimeException(errorPrefix + " Failed with key " + keyLabel + ": " + e.getMessage(), e);
+                    System.err.println("WARN: " + errorPrefix + " key " + keyLabel
+                            + " failed before quota classification: " + e.getClass().getSimpleName()
+                            + ": " + e.getMessage());
                     break;
                 }
             }
         }
 
-        throw new RuntimeException(errorPrefix + " thất bại với toàn bộ Gemini API keys đã cấu hình. "
-                + "Hãy kiểm tra quota/key hoặc thêm key khác vào GEMINI_API_KEYS.",
-                lastFailure);
+        throw new RuntimeException(buildGeminiFailureMessage(errorPrefix, lastFailure), lastFailure);
     }
 
     private String geminiUrl(String apiKey) {
         return "https://generativelanguage.googleapis.com/v1beta/models/"
                 + geminiProModel + ":generateContent?key=" + apiKey;
+    }
+
+    private String buildGeminiFailureMessage(String errorPrefix, RuntimeException lastFailure) {
+        String detail = lastFailure == null || lastFailure.getMessage() == null
+                ? ""
+                : lastFailure.getMessage();
+        String lower = detail.toLowerCase(Locale.ROOT);
+
+        if (lower.contains("quota") || lower.contains("resource_exhausted") || lower.contains("429")) {
+            return errorPrefix + " thất bại vì quota/rate limit của Gemini. "
+                    + "Hãy kiểm tra đúng project/model đang dùng hoặc thêm key khác vào GEMINI_API_KEYS.";
+        }
+        if (lower.contains("api key not valid")
+                || lower.contains("permission_denied")
+                || lower.contains("unauthenticated")
+                || lower.contains("403")
+                || lower.contains("401")) {
+            return errorPrefix + " thất bại vì API key Gemini không hợp lệ hoặc không có quyền dùng model đã chọn.";
+        }
+        return errorPrefix + " thất bại trước khi xác nhận quota Gemini. "
+                + "Nguyên nhân gần nhất: " + truncate(detail, 240);
     }
 
     private List<String> resolveGeminiApiKeys() {

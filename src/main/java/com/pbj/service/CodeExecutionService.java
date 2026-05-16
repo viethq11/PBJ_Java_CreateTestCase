@@ -7,6 +7,7 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -422,9 +423,9 @@ public class CodeExecutionService {
             throws IOException, InterruptedException {
         return switch (langInfo) {
             case PYTHON -> runCompilation(dir, "python3", "-m", "py_compile", fileName);
-            case CPP    -> runCompilation(dir, langInfo.compilerCmd, fileName, "-O2",
+            case CPP    -> runCompilation(dir, resolveCommand(langInfo.compilerCmd), fileName, "-O2",
                                           "-o", dir.getAbsolutePath() + File.separator + langInfo.runArg);
-            case JAVA   -> runCompilation(dir, langInfo.compilerCmd, fileName);
+            case JAVA   -> runCompilation(dir, resolveCommand(langInfo.compilerCmd), fileName);
         };
     }
 
@@ -432,6 +433,7 @@ public class CodeExecutionService {
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(dir);
         pb.redirectErrorStream(true);
+        prependBundledToolchainToPath(pb, command);
         try {
             Process process = pb.start();
             boolean finished = process.waitFor(30, TimeUnit.SECONDS);
@@ -708,11 +710,74 @@ public class CodeExecutionService {
     }
 
     private boolean isCommandAvailable(String command) {
+        if (resolveBundledCommand(command) != null) {
+            return true;
+        }
         try {
             Process p = new ProcessBuilder(IS_LINUX ? "which" : "where", command).start();
             return p.waitFor() == 0;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    private String resolveCommand(String command) {
+        String bundled = resolveBundledCommand(command);
+        return bundled != null ? bundled : command;
+    }
+
+    private String resolveBundledCommand(String command) {
+        if (command == null || command.isBlank() || IS_LINUX) {
+            return null;
+        }
+
+        String executable = command.endsWith(".exe") ? command : command + ".exe";
+        String configuredBin = System.getenv("PBJ_TOOLCHAIN_BIN");
+        List<Path> candidates = new ArrayList<>();
+        if (configuredBin != null && !configuredBin.isBlank()) {
+            candidates.add(Paths.get(configuredBin));
+        }
+
+        Path userDir = Paths.get(System.getProperty("user.dir", "."));
+        candidates.add(userDir.resolve("tools").resolve("w64extract").resolve("w64devkit").resolve("bin"));
+        candidates.add(userDir.resolve("tools").resolve("w64devkit").resolve("bin"));
+        candidates.add(userDir.resolve(".tools").resolve("w64devkit").resolve("bin"));
+
+        for (Path binDir : candidates) {
+            try {
+                Path candidate = binDir.resolve(executable);
+                if (Files.isRegularFile(candidate)) {
+                    return candidate.toAbsolutePath().toString();
+                }
+            } catch (Exception ignore) {
+                // Ignore malformed or inaccessible candidate paths and continue probing.
+            }
+        }
+        return null;
+    }
+
+    private void prependBundledToolchainToPath(ProcessBuilder pb, String... command) {
+        if (pb == null || command == null || command.length == 0) {
+            return;
+        }
+
+        try {
+            Path executable = Paths.get(command[0]);
+            if (!executable.isAbsolute()) {
+                return;
+            }
+            Path binDir = executable.getParent();
+            if (binDir == null || !Files.isDirectory(binDir)) {
+                return;
+            }
+
+            String existingPath = pb.environment().getOrDefault("PATH", "");
+            String prefix = binDir.toAbsolutePath().toString();
+            if (!existingPath.toLowerCase().contains(prefix.toLowerCase())) {
+                pb.environment().put("PATH", prefix + File.pathSeparator + existingPath);
+            }
+        } catch (Exception ignore) {
+            // If we cannot adjust PATH, let normal process startup report the compiler error.
         }
     }
 

@@ -63,6 +63,7 @@ public class AiIntegrationService {
             return normalizeArtifacts(cachedDto.get());
         }
 
+        geminiTestGenerationService.verifyApiKeysBeforePipeline();
         String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint);
         String normalizedProblemText = normalizeProblemText(problemText);
         String analysisJson = resolveAnalysisJson(normalizedProblemText);
@@ -82,8 +83,16 @@ public class AiIntegrationService {
         } catch (IllegalStateException ex) {
             System.err.println("WARN: Formal spec grounding invalid, trying repair: " + ex.getMessage());
             dto = normalizeArtifacts(geminiTestGenerationService.repairFormalSpec(problemText, dto, ex.getMessage()));
-            formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
-            saveCache(geminiKey, dto, "gemini-artifacts-repaired");
+            try {
+                formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
+                saveCache(geminiKey, dto, "gemini-artifacts-repaired");
+            } catch (IllegalStateException repairedEx) {
+                System.err.println("WARN: Repaired formal spec still drifted; retrying Gemini with source-only grounding: "
+                        + repairedEx.getMessage());
+                dto = normalizeArtifacts(geminiTestGenerationService.generateTestArtifacts(problemText, "{}", count));
+                formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
+                saveCache(geminiKey, dto, "gemini-artifacts-source-only");
+            }
         }
 
         System.out.println("INFO: [AI Pipeline] Step 3 - System testcase generator...");
@@ -137,6 +146,30 @@ public class AiIntegrationService {
         String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
         String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint);
         return normalizeArtifacts(geminiTestGenerationService.repairFormalSpec(problemText, brokenDto, validationError));
+    }
+
+    public AiResponseDTO recoverReferenceArtifacts(String problemDescription, List<String> base64Images,
+                                                   AiResponseDTO frozenDto) {
+        if (frozenDto == null) return null;
+        boolean missingGolden = isBlank(frozenDto.getGoldenSolution());
+        boolean missingBruteForce = isBlank(frozenDto.getBruteForceSolution());
+        if (!missingGolden && !missingBruteForce) {
+            return frozenDto;
+        }
+
+        String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
+        String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint);
+        System.out.println("INFO: [AI Pipeline] Recovering missing reference artifacts from frozen formal spec...");
+        AiResponseDTO recovered = geminiTestGenerationService.generateReferenceCandidates(problemText, frozenDto);
+        if (missingGolden && !isBlank(recovered.getGoldenSolution())) {
+            frozenDto.setGoldenSolution(recovered.getGoldenSolution());
+        }
+        if (missingBruteForce && !isBlank(recovered.getBruteForceSolution())) {
+            frozenDto.setBruteForceSolution(recovered.getBruteForceSolution());
+            frozenDto.setBruteForceLanguage(
+                    isBlank(recovered.getBruteForceLanguage()) ? "cpp" : recovered.getBruteForceLanguage());
+        }
+        return frozenDto;
     }
 
     public void saveValidatedTestGeneration(String problemDescription, List<String> base64Images,
@@ -393,5 +426,9 @@ public class AiIntegrationService {
 
     private String pipelineCacheKey(String sourceFingerprint, int count) {
         return PIPELINE_CACHE_PREFIX + generateHash(sourceFingerprint + "|count=" + count);
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

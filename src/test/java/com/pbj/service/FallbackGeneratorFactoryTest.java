@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbj.dto.AiResponseDTO;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -103,5 +104,49 @@ class FallbackGeneratorFactoryTest {
         assertThat(candidates.get(0)).contains("cout << T");
         assertThat(candidates.get(0)).contains("for (long long tc = 0; tc < T; tc++)");
         assertThat(candidates.get(0)).contains("vars.clear();");
+    }
+
+    @Test
+    void treeFallbackEscapesModuloOperatorsInsideFormattedTemplate() throws Exception {
+        Method method = FallbackGeneratorFactory.class.getDeclaredMethod("treeGenerator", long.class);
+        method.setAccessible(true);
+
+        String code = (String) method.invoke(factory, 100000L);
+
+        assertThat(code).contains("seed % 3");
+        assertThat(code).contains("rng() % (i - 1)");
+    }
+
+    @Test
+    void schemaTreePathQueriesUseSpecializedGeneratorWithRepeatedValuesAndFourNodeQueries() throws Exception {
+        AiResponseDTO dto = new AiResponseDTO();
+        dto.setInputSchema(objectMapper.readTree("""
+                {
+                  "multiple_test_cases": false,
+                  "lines": [
+                    {"kind": "scalars", "fields": [
+                      {"name": "N", "type": "int", "min": 2, "max": 2000},
+                      {"name": "Q", "type": "int", "min": 1, "max": 50000}
+                    ]},
+                    {"kind": "array", "name": "c", "type": "int", "length": "N", "min": 1, "max": 1000000000},
+                    {"kind": "edges", "length": "N-1", "columns": [
+                      {"name": "u", "type": "node", "min": 1, "max": "N"},
+                      {"name": "v", "type": "node", "min": 1, "max": "N"}
+                    ]},
+                    {"kind": "queries", "length": "Q", "columns": [
+                      {"name": "w", "type": "node", "min": 1, "max": "N"},
+                      {"name": "x", "type": "node", "min": 1, "max": "N"},
+                      {"name": "y", "type": "node", "min": 1, "max": "N"},
+                      {"name": "z", "type": "node", "min": 1, "max": "N"}
+                    ]}
+                  ]
+                }
+                """));
+
+        List<String> candidates = factory.createCandidates(dto);
+
+        assertThat(candidates.get(0)).contains("int palette = max(2, min(18, (int)sqrt((double)n) + 1));");
+        assertThat(candidates.get(0)).contains("cout << w << ' ' << x << ' ' << y << ' ' << z");
+        assertThat(candidates.get(0)).contains("if (t % 4 == 0)");
     }
 }

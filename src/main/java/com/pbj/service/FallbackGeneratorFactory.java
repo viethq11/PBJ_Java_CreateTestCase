@@ -57,6 +57,11 @@ public class FallbackGeneratorFactory {
         JsonNode lines = schema.path("lines");
         if (!lines.isArray() || lines.isEmpty()) return "";
 
+        String specialized = treePathQueryGenerator(schema);
+        if (!specialized.isBlank()) {
+            return specialized;
+        }
+
         Set<String> edgeLengthRefs = collectEdgeLengthRefs(lines);
         StringBuilder body = new StringBuilder();
         boolean supportedAnyLine = false;
@@ -151,6 +156,135 @@ public class FallbackGeneratorFactory {
                 """.formatted(indent(generatedBody, "    "));
     }
 
+    private String treePathQueryGenerator(JsonNode schema) {
+        JsonNode lines = schema.path("lines");
+        if (!looksLikeTreePathQuerySchema(lines)) return "";
+
+        long nMax = scalarMax(lines, "N", 2000L);
+        long qMax = scalarMax(lines, "Q", 50000L);
+        long valueMax = arrayMax(lines, "c", 1_000_000_000L);
+
+        return """
+                #include <bits/stdc++.h>
+                using namespace std;
+
+                int clampInt(long long value, int lo, int hi) {
+                    if (hi < lo) hi = lo;
+                    return (int)max<long long>(lo, min<long long>(hi, value));
+                }
+
+                int main(int argc, char** argv) {
+                    int seed = argc > 1 ? stoi(argv[1]) : 1;
+                    string profile = argc > 2 ? argv[2] : "random_small";
+                    string size = (profile == "overflow_int32" || profile == "overflow_int64_if_relevant" || profile == "stress_performance") ? "stress"
+                            : (profile == "random_large" || profile == "adversarial_structure") ? "large"
+                            : (profile == "medium") ? "medium" : "small";
+                    mt19937 rng(seed);
+
+                    int n = clampInt(%dLL, 2, %d);
+                    int q = clampInt(%dLL, 1, %d);
+                    if (size == "small") {
+                        n = min(n, 8);
+                        q = min(q, 12);
+                    } else if (size == "medium") {
+                        n = min(n, max(30, min(%d, 250)));
+                        q = min(q, max(80, min(%d, 500)));
+                    } else if (size == "large") {
+                        n = min(n, max(300, min(%d, 1200)));
+                        q = min(q, max(2000, min(%d, 12000)));
+                    }
+
+                    cout << n << ' ' << q << "\\n";
+
+                    int palette = max(2, min(18, (int)sqrt((double)n) + 1));
+                    vector<long long> base(palette);
+                    long long hi = %dLL;
+                    long long span = max(10LL, min(hi, 1000000LL));
+                    long long start = 1 + (seed %% 97);
+                    for (int i = 0; i < palette; i++) {
+                        base[i] = start + (i %% 5) * max(1LL, span / max(5, palette));
+                    }
+                    for (int i = 1; i <= n; i++) {
+                        if (i > 1) cout << ' ';
+                        int idx = (i + seed) %% palette;
+                        if (profile == "tie_breaking") idx = i %% 3;
+                        else if (profile == "anti_greedy_small") idx = (i <= n / 2) ? 0 : 1;
+                        else if (size == "stress" && i %% 7 == 0) idx = 0;
+                        cout << base[idx];
+                    }
+                    cout << "\\n";
+
+                    vector<int> parent(n + 1, 0);
+                    if (profile == "edge_boundary" || profile == "anti_greedy_small" || profile == "tie_breaking") {
+                        for (int i = 2; i <= n; i++) parent[i] = i - 1;
+                    } else if (seed %% 3 == 0) {
+                        for (int i = 2; i <= n; i++) parent[i] = 1;
+                    } else if (seed %% 3 == 1) {
+                        for (int i = 2; i <= n; i++) parent[i] = max(1, i / 2);
+                    } else {
+                        for (int i = 2; i <= n; i++) parent[i] = 1 + (int)(rng() %% (i - 1));
+                    }
+                    for (int i = 2; i <= n; i++) cout << parent[i] << ' ' << i << "\\n";
+
+                    vector<int> leaves;
+                    for (int i = 2; i <= n; i++) {
+                        bool hasChild = false;
+                        for (int j = i + 1; j <= n; j++) if (parent[j] == i) { hasChild = true; break; }
+                        if (!hasChild) leaves.push_back(i);
+                    }
+                    if (leaves.empty()) leaves.push_back(n);
+
+                    auto randNode = [&](int salt) {
+                        return 1 + (int)((rng() + salt) %% n);
+                    };
+
+                    for (int t = 0; t < q; t++) {
+                        int w, x, y, z;
+                        if (profile == "edge_boundary") {
+                            w = 1; x = min(n, 2 + (t %% max(1, n - 1)));
+                            y = max(1, n - (t %% max(1, n - 1)));
+                            z = n;
+                        } else if (profile == "anti_greedy_small") {
+                            w = 1; x = n;
+                            y = 1 + (t %% n);
+                            z = n - (t %% n);
+                            if (z < 1) z = 1;
+                        } else if (profile == "tie_breaking") {
+                            int leafA = leaves[t %% leaves.size()];
+                            int leafB = leaves[(t + 1) %% leaves.size()];
+                            w = leafA; x = 1; y = leafB; z = 1;
+                        } else if (t %% 4 == 0) {
+                            w = 1; x = randNode(t + 11);
+                            y = 1; z = randNode(t + 29);
+                        } else if (t %% 4 == 1) {
+                            int leaf = leaves[t %% leaves.size()];
+                            w = leaf; x = parent[leaf] == 0 ? 1 : parent[leaf];
+                            y = leaf; z = 1;
+                        } else if (t %% 4 == 2) {
+                            w = randNode(t + 7);
+                            x = randNode(t + 13);
+                            y = x;
+                            z = randNode(t + 23);
+                        } else {
+                            w = randNode(t + 3);
+                            x = randNode(t + 17);
+                            y = randNode(t + 31);
+                            z = randNode(t + 43);
+                        }
+                        cout << w << ' ' << x << ' ' << y << ' ' << z << "\\n";
+                    }
+                    return 0;
+                }
+                """.formatted(
+                Math.min(5L, nMax), (int) Math.min(Integer.MAX_VALUE, nMax),
+                Math.min(5L, qMax), (int) Math.min(Integer.MAX_VALUE, qMax),
+                (int) Math.min(Integer.MAX_VALUE, nMax),
+                (int) Math.min(Integer.MAX_VALUE, qMax),
+                (int) Math.min(Integer.MAX_VALUE, nMax),
+                (int) Math.min(Integer.MAX_VALUE, qMax),
+                valueMax);
+    }
+
     private Set<String> collectEdgeLengthRefs(JsonNode lines) {
         Set<String> refs = new HashSet<>();
         for (JsonNode line : lines) {
@@ -163,6 +297,65 @@ public class FallbackGeneratorFactory {
             }
         }
         return refs;
+    }
+
+    private boolean looksLikeTreePathQuerySchema(JsonNode lines) {
+        if (lines == null || !lines.isArray() || lines.size() < 4) return false;
+        boolean hasNQ = false;
+        boolean hasValueArray = false;
+        boolean hasTreeEdges = false;
+        boolean hasFourNodeQueries = false;
+        for (JsonNode line : lines) {
+            String kind = line.path("kind").asText("").toLowerCase(Locale.ROOT);
+            if ("scalars".equals(kind) && line.path("fields").isArray()) {
+                boolean seenN = false;
+                boolean seenQ = false;
+                for (JsonNode field : line.path("fields")) {
+                    String name = field.path("name").asText("").toLowerCase(Locale.ROOT);
+                    if ("n".equals(name)) seenN = true;
+                    if ("q".equals(name)) seenQ = true;
+                }
+                hasNQ |= seenN && seenQ;
+            } else if ("array".equals(kind)) {
+                String length = line.path("length").asText("").trim().toLowerCase(Locale.ROOT);
+                String name = line.path("name").asText("").trim().toLowerCase(Locale.ROOT);
+                hasValueArray |= "n".equals(length) && ("c".equals(name) || "a".equals(name) || "value".equals(name));
+            } else if ("edges".equals(kind)) {
+                String length = line.path("length").asText("").replace(" ", "").toLowerCase(Locale.ROOT);
+                hasTreeEdges |= ("n-1".equals(length) || "n - 1".equals(length))
+                        && countNodeColumns(line.path("columns")) >= 2;
+            } else if ("queries".equals(kind)) {
+                JsonNode columns = line.path("columns");
+                if (columns.isArray() && columns.size() == 4 && countNodeColumns(columns) == 4) {
+                    hasFourNodeQueries = true;
+                }
+            }
+        }
+        return hasNQ && hasValueArray && hasTreeEdges && hasFourNodeQueries;
+    }
+
+    private long scalarMax(JsonNode lines, String name, long fallback) {
+        if (lines == null || !lines.isArray()) return fallback;
+        for (JsonNode line : lines) {
+            if (!"scalars".equalsIgnoreCase(line.path("kind").asText(""))) continue;
+            for (JsonNode field : line.path("fields")) {
+                if (name.equalsIgnoreCase(field.path("name").asText(""))) {
+                    return Math.max(1L, numericBound(field.path("max"), fallback));
+                }
+            }
+        }
+        return fallback;
+    }
+
+    private long arrayMax(JsonNode lines, String name, long fallback) {
+        if (lines == null || !lines.isArray()) return fallback;
+        for (JsonNode line : lines) {
+            if (!"array".equalsIgnoreCase(line.path("kind").asText(""))) continue;
+            if (name.equalsIgnoreCase(line.path("name").asText(""))) {
+                return Math.max(1L, numericBound(line.path("max"), fallback));
+            }
+        }
+        return fallback;
     }
 
     private boolean appendScalarLine(StringBuilder body, JsonNode line, Set<String> edgeLengthRefs) {
@@ -652,9 +845,9 @@ public class FallbackGeneratorFactory {
                     cout << n << "\\n";
                     for (int i = 2; i <= n; i++) {
                         int parent;
-                        if (seed % 3 == 0) parent = 1;
-                        else if (seed % 3 == 1) parent = i - 1;
-                        else parent = 1 + (int)(rng() % (i - 1));
+                        if (seed %% 3 == 0) parent = 1;
+                        else if (seed %% 3 == 1) parent = i - 1;
+                        else parent = 1 + (int)(rng() %% (i - 1));
                         cout << parent << ' ' << i << "\\n";
                     }
                     return 0;

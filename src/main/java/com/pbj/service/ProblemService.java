@@ -429,6 +429,14 @@ public class ProblemService {
                 String profile = run[0];
                 int seed    = Integer.parseInt(run[1]);
 
+                // Rule: Don't generate large/stress tests if verification failed
+                if (dto.getVerificationReport() != null && !dto.getVerificationReport().path("passed").asBoolean(true)) {
+                    if (profile.equals("random_large") || profile.equals("stress_performance") || profile.equals("medium")) {
+                        System.out.println("SKIP: Skipping large/medium profile " + profile + " due to verification failure.");
+                        continue;
+                    }
+                }
+
                 System.out.println("DEBUG: Running generator seed=" + seed + " profile=" + profile);
                 CodeExecutionService.GeneratorResult generatorResult = codeExecutionService.runGeneratorDetailed(
                         generatorCode, generatorLanguage, seed, profile);

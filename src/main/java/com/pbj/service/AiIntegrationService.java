@@ -2,6 +2,7 @@ package com.pbj.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbj.dto.AiResponseDTO;
+import com.pbj.dto.AiProblemAnalysisDTO;
 import com.pbj.entity.AiCache;
 import com.pbj.repository.AiCacheRepository;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,7 @@ public class AiIntegrationService {
     private final GeminiTestGenerationService geminiTestGenerationService;
     private final FormalSpecValidationService formalSpecValidationService;
     private final SystemTestcaseGeneratorService systemTestcaseGeneratorService;
+    private final VerificationService verificationService;
     private final ObjectMapper objectMapper;
 
     public AiResponseDTO generateTestCases(String problemDescription, List<String> base64Images, int count) {
@@ -60,45 +62,42 @@ public class AiIntegrationService {
                                                   boolean bypassCache, String sourceFingerprint, String cacheKey) {
         Optional<AiResponseDTO> cachedDto = readCache(cacheKey, AiResponseDTO.class, "pipeline-after-queue");
         if (!bypassCache && cachedDto.isPresent()) {
-            return normalizeArtifacts(cachedDto.get());
+            return cachedDto.get();
         }
 
         geminiTestGenerationService.verifyApiKeysBeforePipeline();
         String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint);
-        String normalizedProblemText = normalizeProblemText(problemText);
-        String analysisJson = resolveAnalysisJson(normalizedProblemText);
+        
+        // Step 1: Problem Analysis (Call 1)
+        System.out.println("INFO: [AI Pipeline] Step 1 - Gemini problem analysis...");
+        AiProblemAnalysisDTO analysis = geminiTestGenerationService.analyzeProblem(problemText);
+        
+        // Step 2: Generation (Call 2)
+        System.out.println("INFO: [AI Pipeline] Step 2 - Gemini artifact generation...");
+        AiResponseDTO dto = geminiTestGenerationService.generateTestArtifacts(problemText, analysis, count);
 
-        String geminiKey = GEMINI_CACHE_PREFIX + generateHash(normalizedProblemText + "|" + analysisJson + "|count=" + count);
-        Optional<AiResponseDTO> cachedGeminiDto = readCache(geminiKey, AiResponseDTO.class, "gemini-artifacts");
-        AiResponseDTO dto;
-        if (!bypassCache && cachedGeminiDto.isPresent()) {
-            dto = normalizeArtifacts(cachedGeminiDto.get());
-        } else {
-            System.out.println("INFO: [AI Pipeline] Step 2 - Gemini test generation...");
-            dto = normalizeArtifacts(geminiTestGenerationService.generateTestArtifacts(problemText, analysisJson, count));
-            saveCache(geminiKey, dto, "gemini-artifacts");
-        }
-        try {
-            formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
-        } catch (IllegalStateException ex) {
-            System.err.println("WARN: Formal spec grounding invalid, trying repair: " + ex.getMessage());
-            dto = normalizeArtifacts(geminiTestGenerationService.repairFormalSpec(problemText, dto, ex.getMessage()));
-            try {
-                formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
-                saveCache(geminiKey, dto, "gemini-artifacts-repaired");
-            } catch (IllegalStateException repairedEx) {
-                System.err.println("WARN: Repaired formal spec still drifted; retrying Gemini with source-only grounding: "
-                        + repairedEx.getMessage());
-                dto = normalizeArtifacts(geminiTestGenerationService.generateTestArtifacts(problemText, "{}", count));
-                formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
-                saveCache(geminiKey, dto, "gemini-artifacts-source-only");
+        // Step 3: Backend Cross-Check (Brute vs Golden)
+        System.out.println("INFO: [AI Pipeline] Step 3 - Backend verification (Brute vs Golden)...");
+        VerificationService.VerificationReport report = verificationService.verifyBruteVsGolden(dto, 5);
+        dto.setVerificationReport(verificationService.reportToJson(report));
+        
+        if (!report.passed) {
+            System.err.println("WARN: Brute vs Golden verification failed: " + report.message);
+            // Try to repair if mismatch
+            if (report.message.contains("mismatch")) {
+                 System.out.println("INFO: [AI Pipeline] Verification mismatch - attempting repair...");
+                 dto = geminiTestGenerationService.repairFormalSpec(problemText, dto, "Brute vs Golden mismatch: " + report.message);
+                 report = verificationService.verifyBruteVsGolden(dto, 5);
+                 dto.setVerificationReport(verificationService.reportToJson(report));
             }
         }
 
-        System.out.println("INFO: [AI Pipeline] Step 3 - System testcase generator...");
-        String generatorCode = systemTestcaseGeneratorService.buildGenerator(dto, normalizedProblemText);
-        dto.setGeneratorCode(generatorCode);
-        dto.setGeneratorLanguage("cpp");
+        if (report.passed) {
+            System.out.println("INFO: [AI Pipeline] Verification SUCCESS. Saving validated artifacts.");
+            saveCache(cacheKey, dto, "validated-pipeline");
+        } else {
+            System.err.println("WARN: Final verification failed. Returning artifacts as-is but marking as unverified.");
+        }
 
         return dto;
     }

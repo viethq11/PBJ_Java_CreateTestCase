@@ -42,6 +42,21 @@ public class AiResponseDTO {
     @JsonProperty("bruteforce_language")
     private String bruteForceLanguage;
 
+    @JsonProperty("generator_code_b64")
+    private String generatorCodeB64;
+
+    @JsonProperty("golden_solution_b64")
+    private String goldenSolutionB64;
+
+    @JsonProperty("bruteforce_solution_b64")
+    private String bruteForceSolutionB64;
+
+    @JsonProperty("validator_code_b64")
+    private String validatorCodeB64;
+
+    @JsonProperty("input_model")
+    private JsonNode inputModel;
+
     /** Ngôn ngữ của generator_code: "python" hoặc "cpp" */
     @JsonProperty("generator_language")
     private String generatorLanguage;
@@ -75,6 +90,9 @@ public class AiResponseDTO {
 
     @JsonProperty("test_profiles")
     private List<TestProfile> testProfiles;
+
+    @JsonProperty("verification_report")
+    private JsonNode verificationReport;
 
     @Data
     public static class TestPlan {

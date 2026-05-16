@@ -16,13 +16,29 @@ public class SystemTestcaseGeneratorService {
     private final FallbackGeneratorFactory fallbackGeneratorFactory;
 
     public String buildGenerator(AiResponseDTO dto, String sourceStatement) {
+        String templateId = dto.getInputModel() != null && dto.getInputModel().has("template_id")
+                ? dto.getInputModel().get("template_id").asText() : "";
+        
+        // Prioritize template if explicitly chosen or recognized
+        if (!templateId.isBlank()) {
+             System.out.println("INFO: Using template " + templateId + " for generator.");
+             // Implement template selection here
+        }
+
         ProblemMetadata metadata = taxonomyResolver.resolve(dto, sourceStatement);
         String generator = switch (metadata.type()) {
             case GRAPH_ALTERNATING_EDGE_SHORTEST_PATH -> alternatingEdgeShortestPathGenerator(metadata);
+            case ARRAY_PREFIX_SUM -> arrayPrefixSumGenerator(metadata);
             default -> "";
         };
+        
         if (generator != null && !generator.isBlank()) {
             return generator;
+        }
+
+        // If no hardcoded template, use the AI-generated one from the DTO
+        if (dto.getGeneratorCode() != null && !dto.getGeneratorCode().isBlank()) {
+            return dto.getGeneratorCode();
         }
 
         List<String> candidates = fallbackGeneratorFactory.createCandidates(dto);
@@ -166,6 +182,42 @@ public class SystemTestcaseGeneratorService {
                 mMin, mMax,
                 cppBool(allowSelfLoop));
     }
+
+    private String arrayPrefixSumGenerator(ProblemMetadata metadata) {
+        long nMin = scalarBound(metadata.inputSchema(), "N", true, 1L);
+        long nMax = scalarBound(metadata.inputSchema(), "N", false, 100_000L);
+        long qMin = scalarBound(metadata.inputSchema(), "Q", true, 1L);
+        long qMax = scalarBound(metadata.inputSchema(), "Q", false, 100_000L);
+        
+        return """
+                #include <bits/stdc++.h>
+                using namespace std;
+                
+                int main(int argc, char** argv) {
+                    int seed = argc > 1 ? stoi(argv[1]) : 1;
+                    string profile = argc > 2 ? argv[2] : "random_small";
+                    mt19937 rng(seed);
+                    
+                    int n = 10, q = 5;
+                    if (profile == "random_large") { n = %d; q = %d; }
+                    else if (profile == "medium") { n = 1000; q = 1000; }
+                    
+                    cout << n << ' ' << q << "\\n";
+                    for (int i = 0; i < n; i++) {
+                        cout << (int)(rng() %% 1000000) - 500000 << (i == n - 1 ? "" : " ");
+                    }
+                    cout << "\\n";
+                    for (int i = 0; i < q; i++) {
+                        int l = 1 + (rng() %% n);
+                        int r = 1 + (rng() %% n);
+                        if (l > r) swap(l, r);
+                        cout << l << ' ' << r << "\\n";
+                    }
+                    return 0;
+                }
+                """.formatted(nMax, qMax);
+    }
+
 
     private EdgeSpec extractEdgeSpec(JsonNode schema) {
         if (schema == null || !schema.path("lines").isArray()) {

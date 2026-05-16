@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.pbj.dto.AiResponseDTO;
+import com.pbj.dto.AiProblemAnalysisDTO;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -99,8 +100,25 @@ public class GeminiTestGenerationService {
         lastSuccessfulPreflightAtMs = System.currentTimeMillis();
     }
 
-    public AiResponseDTO generateTestArtifacts(String problemText, String analysisJson, int count) {
-        String prompt = buildGenerationPrompt(problemText, analysisJson, count);
+    public AiProblemAnalysisDTO analyzeProblem(String problemText) {
+        String prompt = buildAnalysisPrompt(problemText);
+        Map<String, Object> requestBody = Map.of(
+                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
+                "generationConfig", Map.of(
+                        "responseMimeType", "application/json",
+                        "temperature", 0.1
+                )
+        );
+        String responseText = executeGeminiRequest(requestBody, "Gemini (Problem Analysis)");
+        try {
+            return objectMapper.readValue(stripMarkdownFences(responseText), AiProblemAnalysisDTO.class);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to parse Gemini problem analysis response: " + e.getMessage(), e);
+        }
+    }
+
+    public AiResponseDTO generateTestArtifacts(String problemText, AiProblemAnalysisDTO analysis, int count) {
+        String prompt = buildGenerationPromptV2(problemText, analysis, count);
         Map<String, Object> requestBody = Map.of(
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
                 "generationConfig", Map.of(
@@ -108,7 +126,7 @@ public class GeminiTestGenerationService {
                         "temperature", 0.2
                 )
         );
-        String responseText = executeGeminiRequest(requestBody, "Gemini (Test Generation)");
+        String responseText = executeGeminiRequest(requestBody, "Gemini (Test Generation V2)");
         return parseAnalysisResponse(responseText);
     }
 
@@ -631,10 +649,41 @@ public class GeminiTestGenerationService {
             dto.setCheckerCode(root.path("checker_code").asText(""));
             dto.setValidatorCode(readCodeField(root, "validator_code"));
             dto.setTotalTestcases(root.path("total_testcases").asInt(10));
-            dto.setGeneratorCode(root.path("generator_code").asText(""));
             dto.setGeneratorLanguage(root.path("generator_language").asText("python"));
-            dto.setGoldenSolution(readCodeField(root, "golden_solution"));
-            dto.setBruteForceSolution(readCodeField(root, "bruteforce_solution"));
+            
+            // New Base64 support
+            if (root.has("generator_code_b64")) {
+                dto.setGeneratorCodeB64(root.path("generator_code_b64").asText(""));
+                dto.setGeneratorCode(decodeBase64(dto.getGeneratorCodeB64()));
+            } else {
+                dto.setGeneratorCode(root.path("generator_code").asText(""));
+            }
+
+            if (root.has("golden_solution_b64")) {
+                dto.setGoldenSolutionB64(root.path("golden_solution_b64").asText(""));
+                dto.setGoldenSolution(decodeBase64(dto.getGoldenSolutionB64()));
+            } else {
+                dto.setGoldenSolution(readCodeField(root, "golden_solution"));
+            }
+
+            if (root.has("bruteforce_solution_b64")) {
+                dto.setBruteForceSolutionB64(root.path("bruteforce_solution_b64").asText(""));
+                dto.setBruteForceSolution(decodeBase64(dto.getBruteForceSolutionB64()));
+            } else {
+                dto.setBruteForceSolution(readCodeField(root, "bruteforce_solution"));
+            }
+
+            if (root.has("validator_code_b64")) {
+                dto.setValidatorCodeB64(root.path("validator_code_b64").asText(""));
+                dto.setValidatorCode(decodeBase64(dto.getValidatorCodeB64()));
+            } else {
+                dto.setValidatorCode(readCodeField(root, "validator_code"));
+            }
+
+            if (root.has("input_model")) {
+                dto.setInputModel(root.path("input_model"));
+            }
+
             dto.setBruteForceLanguage(root.path("bruteforce_language").asText("cpp"));
 
             JsonNode testPlanNode = root.path("test_plan");
@@ -1055,5 +1104,126 @@ public class GeminiTestGenerationService {
         String lower = responseBody.toLowerCase();
         return lower.contains("quota exceeded")
                 && (lower.contains("limit: 0") || lower.contains("exceeded your current quota"));
+    }
+
+    private String decodeBase64(String b64) {
+        if (b64 == null || b64.isBlank()) return "";
+        try {
+            return new String(Base64.getDecoder().decode(b64.trim()), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            System.err.println("WARN: Failed to decode Base64: " + e.getMessage());
+            return "";
+        }
+    }
+
+    private String buildAnalysisPrompt(String problemText) {
+        return """
+                You are a competitive programming expert. Analyze the following problem statement.
+                Goal: Identify the problem type, algorithm family, and structure the input model.
+                
+                Input Model Patterns to support:
+                - single_case: simple one-time input
+                - multi_test: T test cases, each with same structure
+                - array_based: focus on one or more arrays
+                - graph_edges: N nodes, M edges (u, v, w)
+                - tree_edges: N nodes, N-1 edges
+                - grid: H x W grid of values
+                - command_based: sequence of different operations (UPDATE, QUERY, etc.)
+                - multiple_sections: distinct parts in input
+                
+                Analyze risks: integer overflow, time limits (TLE), precision, corner cases.
+                
+                Problem statement:
+                %s
+                
+                Return ONLY valid JSON:
+                {
+                  "problem_type": "specific_problem_type_name",
+                  "algorithm_family": "intended_algorithm_or_data_structure",
+                  "input_pattern": "one_of_the_patterns_above",
+                  "constraints": "summary of N, M, values",
+                  "template_id": "optional_suggested_template_id",
+                  "input_model": {
+                    "type": "multi_test_command_based_or_other",
+                    "test_count": "T",
+                    "blocks": [
+                      {
+                        "header": ["n", "m"],
+                        "repeat": "m",
+                        "variants": [
+                          { "keyword": "UPDATE", "args": ["x", "y", "z"] },
+                          { "keyword": "QUERY", "args": ["x1", "y1", "x2", "y2"] }
+                        ]
+                      }
+                    ]
+                  },
+                  "risk_tags": ["overflow", "tle_risk", "precision", "complex_input"],
+                  "analysis_summary": "detailed internal logic"
+                }
+                """.formatted(problemText);
+    }
+
+    private String buildGenerationPromptV2(String problemText, AiProblemAnalysisDTO analysis, int count) {
+        String analysisJson;
+        try {
+            analysisJson = objectMapper.writeValueAsString(analysis);
+        } catch (JsonProcessingException e) {
+            analysisJson = "{}";
+        }
+
+        return """
+                You are a professional competitive programming testcase engineer.
+                Based on the problem statement and the preliminary analysis, generate the necessary artifacts.
+                
+                Problem Statement:
+                %s
+                
+                Preliminary Analysis:
+                %s
+                
+                ABSOLUTE RULE #1: CODE FIELDS MUST BE BASE64
+                To avoid JSON parsing errors with special characters or keywords like UPDATE/QUERY,
+                all source code fields MUST be returned as Base64-encoded strings.
+                
+                Fields to return in Base64:
+                - generator_code_b64
+                - bruteforce_solution_b64
+                - golden_solution_b64
+                - validator_code_b64
+                - wrong_solutions[].code_b64
+                
+                ABSOLUTE RULE #2: TWO SOLUTIONS
+                - golden_solution: Optimized, intended for large constraints.
+                - bruteforce_solution: Correct but simple/slow, intended for small/tiny constraints.
+                
+                ABSOLUTE RULE #3: INPUT MODEL
+                Use the provided input_model from the analysis. Ensure the generator respects it perfectly.
+                
+                ABSOLUTE RULE #4: VIETNAMESE USER-FACING STATEMENT
+                The formatted_description, input_format, output_format, constraints must be in Vietnamese with LaTeX math ($...$).
+                
+                Return EXACTLY this JSON structure:
+                {
+                  "formatted_description": "...",
+                  "input_format": "...",
+                  "output_format": "...",
+                  "constraints": "...",
+                  "input_model": { ... },
+                  "generator_code_b64": "Base64 encoded C++ generator",
+                  "golden_solution_b64": "Base64 encoded C++17 optimized solution",
+                  "bruteforce_solution_b64": "Base64 encoded C++ simple solution",
+                  "validator_code_b64": "Base64 encoded C++ input validator",
+                  "test_profiles": [ ... ],
+                  "bug_classes": [ ... ],
+                  "wrong_solutions": [
+                    {
+                       "name": "...",
+                       "type": "...",
+                       "code_b64": "Base64 encoded code"
+                    }
+                  ],
+                  "total_testcases": %d
+                }
+                """.formatted(problemText, analysisJson, count);
     }
 }

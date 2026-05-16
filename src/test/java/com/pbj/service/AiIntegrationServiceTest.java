@@ -2,6 +2,7 @@ package com.pbj.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbj.dto.AiResponseDTO;
+import com.pbj.dto.AiProblemAnalysisDTO;
 import com.pbj.entity.AiCache;
 import com.pbj.repository.AiCacheRepository;
 import org.junit.jupiter.api.Test;
@@ -38,9 +39,9 @@ class AiIntegrationServiceTest {
             }
 
             @Override
-            public AiResponseDTO generateTestArtifacts(String problemText, String analysisJson, int count) {
+            public AiResponseDTO generateTestArtifacts(String problemText, AiProblemAnalysisDTO analysis, int count) {
                 generationCalls[0]++;
-                return "{}".equals(analysisJson) ? grounded : drifted;
+                return analysis == null ? grounded : drifted;
             }
 
             @Override
@@ -71,10 +72,11 @@ class AiIntegrationServiceTest {
                 cacheRepository,
                 queueService,
                 ollamaAnalysisService,
-                null,
+                null, // ollamaGeneratorService
                 geminiService,
                 new FormalSpecValidationService(),
                 testcaseGeneratorService,
+                mock(VerificationService.class),
                 new ObjectMapper()
         );
 
@@ -125,6 +127,7 @@ class AiIntegrationServiceTest {
                 geminiService,
                 new FormalSpecValidationService(),
                 null,
+                mock(VerificationService.class),
                 new ObjectMapper()
         );
 

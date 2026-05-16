@@ -76,7 +76,7 @@ footer{text-align:center;padding:30px;color:#475569;border-top:1px solid #1e293b
     <div class="grid">
       <div class="card">
         <h4>🤖 AI Pipeline</h4>
-        <p>Sử dụng <strong>Ollama local</strong> để phân tích đề ngắn và <strong>Gemini 2.5 Flash</strong> để sinh test plan, generator, golden solution và validator.</p>
+        <p>Sử dụng <strong>Ollama local</strong> để phân tích nhanh, <strong>Gemini</strong> để chuẩn hoá đặc tả/golden oracle, sau đó backend tự sinh validator và generator theo input_schema.</p>
       </div>
       <div class="card">
         <h4>🛡️ Sandbox Bảo mật</h4>
@@ -84,7 +84,7 @@ footer{text-align:center;padding:30px;color:#475569;border-top:1px solid #1e293b
       </div>
       <div class="card">
         <h4>🗄️ Database HA</h4>
-        <p>MySQL Master-Slave replication: Master xử lý ghi, Slave xử lý đọc — tăng hiệu năng và độ tin cậy.</p>
+        <p>MySQL Master/Slave được cấu hình trong Docker Compose. App dùng master cho ghi, slave cho các luồng đọc khi cấu hình datasource tương ứng.</p>
       </div>
       <div class="card">
         <h4>⚡ Xử lý bất đồng bộ</h4>
@@ -112,7 +112,7 @@ footer{text-align:center;padding:30px;color:#475569;border-top:1px solid #1e293b
 java -version          # Cần: openjdk 21
 mvn -version           # Cần: Apache Maven 3.9+
 docker --version       # Cần: Docker 4.0+
-docker-compose --version</code></pre>
+docker compose version</code></pre>
   </div>
 
   <!-- API KEYS -->
@@ -122,7 +122,7 @@ docker-compose --version</code></pre>
     <div class="step">
       <div class="step-num">1</div>
       <h4>Gemini API Key (Google AI Studio)</h4>
-      <p style="color:#94a3b8;margin-bottom:8px">Dùng để phân tích đề bài và sinh code mẫu (AC/WA/TLE).</p>
+      <p style="color:#94a3b8;margin-bottom:8px">Dùng cho OCR ảnh đề, chuẩn hoá metadata, sinh golden solution nội bộ và kế hoạch kiểm thử.</p>
       <ol style="padding-left:20px;color:#94a3b8;font-size:.9rem;line-height:2">
         <li>Truy cập <a href="https://aistudio.google.com/app/apikey" style="color:#60a5fa">aistudio.google.com/app/apikey</a></li>
         <li>Đăng nhập bằng tài khoản Google</li>
@@ -147,7 +147,13 @@ docker-compose --version</code></pre>
       <div class="step-num">3</div>
       <h4>Tạo file <code>.env</code> tại thư mục gốc dự án</h4>
       <pre><code>GEMINI_API_KEY=AIzaSy...your_key_here
-OLLAMA_BASE_URL=http://localhost:11434
+# Hoặc dùng nhiều key, phân tách bằng dấu phẩy/chấm phẩy/xuống dòng
+GEMINI_API_KEYS=
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_PRO_MODEL=gemini-2.5-flash
+
+# Khi chạy bằng Docker, app gọi Ollama trên máy host qua host.docker.internal
+OLLAMA_BASE_URL=http://host.docker.internal:11434
 OLLAMA_MODEL=llama3.1:8b</code></pre>
       <div class="alert alert-warn" style="margin-top:10px">
         <span class="icon">🔒</span>
@@ -171,7 +177,10 @@ cd pbj-judge</code></pre>
       <div class="step-num">2</div>
       <h4>Tạo file <code>.env</code> với API keys (xem mục trên)</h4>
       <pre><code>GEMINI_API_KEY=your_gemini_api_key
-OLLAMA_BASE_URL=http://localhost:11434
+GEMINI_API_KEYS=
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_PRO_MODEL=gemini-2.5-flash
+OLLAMA_BASE_URL=http://host.docker.internal:11434
 OLLAMA_MODEL=llama3.1:8b</code></pre>
     </div>
 
@@ -188,13 +197,13 @@ OLLAMA_MODEL=llama3.1:8b</code></pre>
     <div class="step">
       <div class="step-num">4</div>
       <h4>Khởi động toàn bộ hệ thống bằng Docker Compose</h4>
-      <pre><code>docker-compose up -d --build</code></pre>
+      <pre><code>docker compose up -d --build</code></pre>
       <p style="color:#94a3b8;margin-top:8px;font-size:.9rem">
         Docker sẽ tự động:<br>
         ✅ Build image ứng dụng từ Dockerfile<br>
         ✅ Khởi động MySQL Master (port 3307) và MySQL Slave (port 3308)<br>
         ✅ Đợi database sẵn sàng (healthcheck) rồi mới chạy app<br>
-        ✅ Tạo thư mục <code>testcase_data/</code> để lưu trữ dữ liệu test case
+        ✅ Gắn volume <code>testcase-data</code> để lưu file test case trong container
       </p>
     </div>
 
@@ -243,16 +252,16 @@ OLLAMA_MODEL=llama3.1:8b</code></pre>
 docker logs pbj-judge-app --tail 50 -f
 
 # Khởi động lại app (không rebuild)
-docker-compose restart app
+docker compose restart app
 
 # Dừng toàn bộ hệ thống
-docker-compose down
+docker compose down
 
 # Dừng và XÓA dữ liệu database (cẩn thận!)
-docker-compose down -v
+docker compose down -v
 
 # Rebuild và khởi động lại sau khi sửa code
-mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pre>
+mvn clean package -DskipTests &amp;&amp; docker compose up -d --build app</code></pre>
   </div>
 
   <!-- STRUCTURE -->
@@ -268,13 +277,16 @@ mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pr
 │       │   ├── entity/          # Problem, TestCase entities
 │       │   ├── repository/      # JPA Repositories
 │       │   └── service/
-│       │       ├── AiIntegrationService.java    # Điều phối Ollama + Gemini
-│       │       ├── OllamaAnalysisService.java   # Phân tích đề ngắn bằng Ollama local
-│       │       ├── GeminiTestGenerationService.java # Sinh test plan/generator/golden/validator
-│       │       ├── CodeExecutionService.java    # Sandbox thực thi code
-│       │       ├── JobQueueService.java         # Quản lý async jobs
-│       │       ├── ProblemService.java          # Logic nghiệp vụ chính
-│       │       └── TestCaseStorageService.java  # Lưu file test case
+│       │       ├── AiIntegrationService.java        # Điều phối OCR/cache/Ollama/Gemini/system generator
+│       │       ├── OllamaAnalysisService.java       # Phân tích đề ngắn bằng Ollama local
+│       │       ├── GeminiTestGenerationService.java # Sinh metadata, test plan, golden oracle
+│       │       ├── SystemTestcaseGeneratorService.java # Chọn generator backend theo taxonomy
+│       │       ├── FallbackGeneratorFactory.java    # Generic generator theo input_schema
+│       │       ├── LocalValidatorBuilderService.java # Tự dựng validator từ input_schema
+│       │       ├── CodeExecutionService.java        # Sandbox compile/run C++/Java/Python
+│       │       ├── JobQueueService.java             # Quản lý async jobs + elapsed time
+│       │       ├── ProblemService.java              # Logic nghiệp vụ chính
+│       │       └── TestCaseStorageService.java      # Lưu file test case
 │       └── resources/
 │           ├── application.yml  # Cấu hình Spring Boot
 │           └── templates/       # Giao diện Thymeleaf (index, problem, create)
@@ -283,7 +295,7 @@ mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pr
 │   ├── master_data/  # Dữ liệu MySQL Master (auto-generated)
 │   ├── slave_conf/   # Cấu hình MySQL Slave
 │   └── slave_data/   # Dữ liệu MySQL Slave (auto-generated)
-├── testcase_data/    # File .in/.out của test case (bind mount)
+├── testcase_data/    # Dữ liệu test case legacy/local nếu chạy ngoài Docker
 ├── .env              # API keys (KHÔNG commit lên Git)
 ├── docker-compose.yml
 ├── Dockerfile
@@ -293,11 +305,12 @@ mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pr
     <div class="card" style="margin-top:10px">
       <p style="color:#94a3b8;font-size:.9rem;line-height:2">
         <span class="tag">Bước 1</span> Người dùng nhập đề bài (text + ảnh)<br>
-        <span class="tag">Bước 2</span> <strong>Ollama local</strong> phân tích → sinh <code>analysis_json</code> ngắn<br>
-        <span class="tag">Bước 3</span> <strong>Gemini 2.5 Flash</strong> nhận đề gốc + analysis_json → sinh test plan, generator, golden solution, validator<br>
-        <span class="tag">Bước 4</span> Backend chạy validator, generator và golden solution trong sandbox<br>
-        <span class="tag">Bước 5</span> File <code>.in</code>/<code>.out</code> lưu vào <code>testcase_data/problem_X/</code><br>
-        <span class="tag">Bước 6</span> Kiểm tra verdict separation: AC solution pass, WA probe fail, TLE probe timeout
+        <span class="tag">Bước 2</span> Nếu có ảnh, Gemini OCR trích xuất statement; ảnh được encode ngay trước khi job chạy nền<br>
+        <span class="tag">Bước 3</span> <strong>Ollama local</strong> phân tích → sinh <code>analysis_json</code> ngắn<br>
+        <span class="tag">Bước 4</span> <strong>Gemini</strong> nhận đề gốc + analysis_json → sinh metadata, input_schema, golden oracle, test plan<br>
+        <span class="tag">Bước 5</span> Backend tự dựng validator từ <code>input_schema</code> và chọn generator hệ thống/fallback<br>
+        <span class="tag">Bước 6</span> Chạy generator + validator + golden solution trong sandbox, có kiểm tra multi-testcase và profile coverage<br>
+        <span class="tag">Bước 7</span> Lưu <code>.in</code>/<code>.out</code> và cache artifact đã qua validation
       </p>
     </div>
   </div>
@@ -310,13 +323,13 @@ mvn clean package -DskipTests &amp;&amp; docker-compose up -d --build</code></pr
       <div class="step-num">!</div>
       <h4>Container không khởi động được</h4>
       <pre><code>docker logs pbj-judge-app 2>&1 | tail -30</code></pre>
-      <p style="color:#94a3b8;font-size:.9rem">Nếu lỗi <em>"Connection refused"</em> → MySQL chưa sẵn sàng. Đợi thêm 30 giây rồi chạy lại <code>docker-compose up -d</code>.</p>
+      <p style="color:#94a3b8;font-size:.9rem">Nếu lỗi <em>"Connection refused"</em> → MySQL chưa sẵn sàng. Đợi thêm 30 giây rồi chạy lại <code>docker compose up -d</code>.</p>
     </div>
 
     <div class="step">
       <div class="step-num">!</div>
       <h4>Lỗi <code>401 Unauthorized</code> từ AI</h4>
-      <p style="color:#94a3b8;font-size:.9rem">API key không hợp lệ, hết quota, hoặc Ollama chưa chạy. Kiểm tra <code>GEMINI_API_KEY</code>, <code>OLLAMA_BASE_URL</code> và service Ollama local.</p>
+      <p style="color:#94a3b8;font-size:.9rem">API key không hợp lệ, hết quota, hoặc Ollama chưa chạy. Kiểm tra <code>GEMINI_API_KEY</code>/<code>GEMINI_API_KEYS</code>, <code>OLLAMA_BASE_URL</code> và service Ollama local.</p>
     </div>
 
     <div class="step">
@@ -327,6 +340,18 @@ java -version   # Phải là 21
 
 # Xóa cache và build lại
 mvn clean package -DskipTests -U</code></pre>
+    </div>
+
+    <div class="step">
+      <div class="step-num">!</div>
+      <h4>Lỗi formal spec báo <code>unknown/unspecified</code></h4>
+      <p style="color:#94a3b8;font-size:.9rem">Thường do OCR thiếu phần Input/Output/Constraints hoặc mô tả text quá ít. Hãy nhập thêm statement dạng text hoặc upload ảnh rõ hơn. Log cần xem: <code>docker logs pbj-judge-app --tail 200</code>.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-num">!</div>
+      <h4>Lỗi golden solution fail/TLE khi sinh testcase</h4>
+      <p style="color:#94a3b8;font-size:.9rem">Backend sẽ log lỗi compile/runtime/TLE chi tiết và tự xoá cache artifact hỏng khi cần. Với bài nhiều test, validator/generator hiện đã hỗ trợ <code>multiple_test_cases=true</code>.</p>
     </div>
 
     <div class="step">
@@ -348,7 +373,7 @@ ports:
 
     <div class="alert alert-info" style="margin-top:20px">
       <span class="icon">💡</span>
-      <div><strong>Tip:</strong> Để xem log realtime của cả hệ thống: <code>docker-compose logs -f</code></div>
+      <div><strong>Tip:</strong> Để xem log realtime của cả hệ thống: <code>docker compose logs -f</code></div>
     </div>
   </div>
 

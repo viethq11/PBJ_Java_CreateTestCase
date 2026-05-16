@@ -23,11 +23,13 @@ public class AiJobQueueService {
     public <T> T runQueued(String jobName, Supplier<T> supplier) {
         boolean acquired = false;
         long queuedAt = System.currentTimeMillis();
+        long startedAt = 0L;
         try {
             System.out.println("INFO: [AI Queue] Waiting for slot: " + jobName);
             semaphore.acquire();
             acquired = true;
-            long waitedMs = System.currentTimeMillis() - queuedAt;
+            startedAt = System.currentTimeMillis();
+            long waitedMs = startedAt - queuedAt;
             System.out.println("INFO: [AI Queue] Started: " + jobName + " after waiting " + waitedMs + " ms");
             return supplier.get();
         } catch (InterruptedException e) {
@@ -36,7 +38,8 @@ public class AiJobQueueService {
         } finally {
             if (acquired) {
                 semaphore.release();
-                System.out.println("INFO: [AI Queue] Finished: " + jobName);
+                long durationMs = startedAt == 0L ? 0L : System.currentTimeMillis() - startedAt;
+                System.out.println("INFO: [AI Queue] Finished: " + jobName + " in " + durationMs + " ms");
             }
         }
     }

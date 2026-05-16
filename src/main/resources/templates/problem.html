@@ -30,6 +30,45 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #94a3b8; 
         }
+        @media (min-width: 1024px) {
+            .workspace-shell {
+                height: calc(100vh - 4rem);
+                overflow: hidden;
+            }
+            .scroll-pane {
+                height: 100%;
+                overflow-y: auto;
+            }
+            .code-card {
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+        }
+        .testcase-box {
+            min-height: 10rem;
+            max-height: 28rem;
+            overflow: auto;
+            resize: vertical;
+        }
+        .code-editor-frame {
+            min-height: 18rem;
+            height: 42vh;
+            max-height: calc(100vh - 22rem);
+            overflow: hidden;
+            resize: vertical;
+        }
+        .code-editor-frame textarea {
+            width: 100%;
+            height: 100%;
+            resize: none;
+        }
+        .run-actions {
+            border-top: 1px solid #e2e8f0;
+            background: white;
+            padding-top: 1rem;
+        }
     </style>
 <script th:inline="none">
         MathJax = {
@@ -60,8 +99,8 @@
         </div>
     </nav>
 
-    <div class="flex-1 container mx-auto px-4 max-w-7xl py-8 grid lg:grid-cols-12 gap-8">
-        <div class="lg:col-span-7 space-y-6">
+    <div class="workspace-shell flex-1 container mx-auto px-4 max-w-7xl py-8 grid lg:grid-cols-12 gap-8">
+        <div class="lg:col-span-7 space-y-6 scroll-pane lg:pr-2 pb-8">
             <div th:if="${success}" class="bg-green-50 text-green-800 border-l-4 border-green-500 p-4 rounded-r-md shadow-sm mb-6 font-medium">
                 <div class="flex items-center">
                     <svg class="h-5 w-5 text-green-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
@@ -126,11 +165,15 @@
                         <div class="p-4 grid md:grid-cols-2 gap-4 bg-white">
                             <div>
                                 <div class="text-xs text-slate-500 mb-1.5 uppercase tracking-wider font-bold">Dữ liệu vào</div>
-                                <pre class="text-sm text-slate-800 bg-slate-50 border border-slate-200 p-3 rounded-md whitespace-pre-wrap max-h-60 overflow-y-auto" th:text="${tc.inputData}"></pre>
+                                <div class="testcase-box text-sm text-slate-800 bg-slate-50 border border-slate-200 p-3 rounded-md">
+                                    <pre class="whitespace-pre-wrap" th:text="${tc.inputData}"></pre>
+                                </div>
                             </div>
                             <div>
                                 <div class="text-xs text-slate-500 mb-1.5 uppercase tracking-wider font-bold">Dữ liệu ra</div>
-                                <pre class="text-sm text-slate-800 bg-slate-50 border border-slate-200 p-3 rounded-md whitespace-pre-wrap max-h-60 overflow-y-auto" th:text="${tc.outputData}"></pre>
+                                <div class="testcase-box text-sm text-slate-800 bg-slate-50 border border-slate-200 p-3 rounded-md">
+                                    <pre class="whitespace-pre-wrap" th:text="${tc.outputData}"></pre>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -138,8 +181,8 @@
             </div>
         </div>
 
-        <div class="lg:col-span-5" id="submit_section">
-            <div class="bg-white p-6 rounded-lg border border-slate-200 shadow-sm sticky top-24">
+        <div class="lg:col-span-5 scroll-pane" id="submit_section">
+            <div class="code-card bg-white p-6 rounded-lg border border-slate-200 shadow-sm lg:sticky lg:top-0">
                 <div th:if="${runResult != null}" class="mb-6 p-5 rounded-lg border"
                      th:classappend="${runResult.expectationMet ? 'bg-green-50 border-green-200' :
                                      runResult.status.name() == 'CE' ? 'bg-yellow-50 border-yellow-200' :
@@ -164,28 +207,30 @@
 
                 <h3 class="text-xl font-bold text-slate-800 mb-6" th:text="${index != null ? 'Kiểm tra mã nguồn: Bài ' + index + ' - ' : 'Kiểm tra mã nguồn: '} + ${problem.title}">Hệ thống chấm bài</h3>
 
-                <form id="runForm" class="space-y-5">
+                <form id="runForm" class="flex min-h-0 flex-col gap-5">
                     <input type="hidden" name="problemId" th:value="${problem.id}" />
 
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Ngôn ngữ</label>
-                        <select id="language" name="language" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="cpp">C++ (g++)</option>
-                            <option value="java">Java (javac/java)</option>
-                            <option value="python">Python</option>
-                        </select>
+                    <div class="grid sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1.5">Ngôn ngữ</label>
+                            <select id="language" name="language" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="cpp">C++ (g++)</option>
+                                <option value="java">Java (javac/java)</option>
+                                <option value="python">Python</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1.5">Kết quả kỳ vọng</label>
+                            <select name="expectedStatus" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="AC">AC</option>
+                                <option value="WA">WA</option>
+                                <option value="TLE">TLE</option>
+                            </select>
+                        </div>
                     </div>
 
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Kết quả kỳ vọng</label>
-                        <select name="expectedStatus" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="AC">AC</option>
-                            <option value="WA">WA</option>
-                            <option value="TLE">TLE</option>
-                        </select>
-                    </div>
-
-                    <div>
+                    <div class="min-h-0">
                         <label class="block text-sm font-medium text-slate-700 mb-2 flex flex-col sm:flex-row sm:justify-between sm:items-end gap-2">
                             <span>Mã nguồn</span>
                             <div class="flex gap-2 flex-wrap">
@@ -194,17 +239,21 @@
                                 <button type="button" id="autoGenTleBtn" class="text-[11px] font-semibold bg-yellow-50 text-yellow-600 px-2 py-1 rounded border border-yellow-200 hover:bg-yellow-100 transition">Tự động tạo TLE</button>
                             </div>
                         </label>
-                        <textarea id="sourceCode" name="sourceCode" rows="16" required spellcheck="false"
-                            class="w-full bg-slate-50 border border-slate-300 rounded-md p-3 text-slate-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"></textarea>
+                        <div class="code-editor-frame bg-slate-50 border border-slate-300 rounded-md focus-within:ring-2 focus-within:ring-blue-500">
+                            <textarea id="sourceCode" name="sourceCode" required spellcheck="false"
+                                class="bg-transparent p-3 text-slate-800 font-mono text-sm focus:outline-none"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="run-actions">
+                        <button type="submit" id="runSubmitBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-md transition-colors shadow-sm flex justify-center items-center">
+                            <svg id="runSpinner" class="hidden animate-spin w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            <span id="submitBtnText">Chạy mã nguồn &amp; Kiểm tra</span>
+                        </button>
                     </div>
 
                     <!-- Run result area (populated by JS) -->
                     <div id="runResultArea" class="hidden p-5 rounded-lg border"></div>
-
-                    <button type="submit" id="runSubmitBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-md transition-colors shadow-sm flex justify-center items-center">
-                        <svg id="runSpinner" class="hidden animate-spin w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                        <span id="submitBtnText">Chạy mã nguồn &amp; Kiểm tra</span>
-                    </button>
                 </form>
             </div>
         </div>

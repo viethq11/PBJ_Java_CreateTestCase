@@ -96,6 +96,20 @@ class ProblemServiceQualityTest {
     }
 
     @Test
+    void coverageGateAllowsMediumAndAdversarialWhenLargeOracleTimedOut() {
+        AiResponseDTO dto = new AiResponseDTO();
+
+        ProblemService.GenerationQualitySummary quality = new ProblemService.GenerationQualitySummary();
+        quality.acceptedProfiles.add("edge_boundary");
+        quality.acceptedProfiles.add("random_small");
+        quality.acceptedProfiles.add("medium");
+        quality.acceptedProfiles.add("anti_greedy_small");
+        quality.withKilledBySuite(Set.of());
+
+        service.validateCoverageGates(dto, quality);
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void overflowRiskAddsBroaderMiningProfiles() throws Exception {
         AiResponseDTO dto = new AiResponseDTO();

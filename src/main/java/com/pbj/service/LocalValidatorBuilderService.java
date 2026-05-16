@@ -54,9 +54,9 @@ public class LocalValidatorBuilderService {
         script.add("def validate():");
         script.add("    tokens = sys.stdin.read().strip().split()");
         script.add("    idx = 0");
-        script.add("    vars_ = {}");
         script.add("");
 
+        List<String> caseScript = new ArrayList<>();
         int lineNo = 0;
         for (JsonNode line : lines) {
             String kind = line.path("kind").asText("").trim().toLowerCase(Locale.ROOT);
@@ -65,16 +65,31 @@ public class LocalValidatorBuilderService {
                 continue;
             }
             switch (kind) {
-                case "scalars" -> appendScalars(script, line, lineNo);
-                case "array" -> appendArray(script, line, lineNo);
-                case "matrix", "grid" -> appendMatrix(script, line, lineNo);
-                case "edges", "queries" -> appendTuples(script, line, lineNo);
-                case "string" -> appendString(script, line, lineNo);
+                case "scalars" -> appendScalars(caseScript, line, lineNo);
+                case "array" -> appendArray(caseScript, line, lineNo);
+                case "matrix", "grid" -> appendMatrix(caseScript, line, lineNo);
+                case "edges", "queries" -> appendTuples(caseScript, line, lineNo);
+                case "string" -> appendString(caseScript, line, lineNo);
                 default -> {
                     // raw_lines and unknown kinds: skip strict checking to avoid false negatives
                 }
             }
             lineNo++;
+        }
+
+        if (inputSchema.path("multiple_test_cases").asBoolean(false)) {
+            script.add("    if idx >= len(tokens): die('missing token for T')");
+            script.add("    T = to_int(tokens[idx], 'T')");
+            script.add("    idx += 1");
+            script.add("    if T < 1: die('T below min')");
+            script.add("    for _case in range(T):");
+            script.add("        vars_ = {}");
+            for (String line : caseScript) {
+                script.add("    " + line);
+            }
+        } else {
+            script.add("    vars_ = {}");
+            script.addAll(caseScript);
         }
 
         script.add("");
@@ -208,4 +223,3 @@ public class LocalValidatorBuilderService {
         return text.replace("\\", "\\\\").replace("'", "\\'");
     }
 }
-

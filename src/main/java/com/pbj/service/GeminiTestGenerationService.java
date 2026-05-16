@@ -5,6 +5,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.pbj.dto.AiResponseDTO;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.nio.charset.StandardCharsets;
 
 @Service
@@ -51,8 +54,10 @@ public class GeminiTestGenerationService {
         String prompt = """
                 You are an expert OCR system for competitive programming problems.
                 Read the attached image(s) carefully and extract the COMPLETE problem statement as plain text.
-                Preserve all mathematical formulas using LaTeX notation ($...$ or $$...$$).
-                Preserve all constraints, examples, and formatting.
+                Preserve all mathematical formulas, comparisons, exponents, and constraints exactly.
+                Prefer plain-text math that survives web rendering: <=, >=, !=, 10^5, 2^31-1, a_i, x mod m.
+                Do not turn inequalities such as a < b into HTML tags or omit the comparison operators.
+                Preserve all examples and line breaks.
                 Output ONLY the extracted problem text. No explanations, no JSON, just the raw problem text.
                 """
                 + (hint != null && !hint.isBlank() ? "\nAdditional context from user: " + hint : "");
@@ -81,51 +86,18 @@ public class GeminiTestGenerationService {
         return parseAnalysisResponse(responseText);
     }
 
-    public String generateCode(String title, String description, String inputFormat, String outputFormat,
-                               String constraints, String language, String type) {
-        String promptType = switch (type) {
-            case "AC" -> "You are a Competitive Programming Grandmaster. Write a perfect Accepted solution for the problem below. Use the optimal algorithm, handle all edge cases (overflow, N=max, etc.). Return ONLY the source code, no explanation, no markdown fences.";
-            case "WA" -> "Write a subtly Wrong Answer solution for the problem below. It should pass sample tests but fail on edge cases (e.g., integer overflow, wrong logic for boundary, missed corner case). Return ONLY the source code.";
-            case "TLE" -> "Write a Time Limit Exceeded solution for the problem below. Use correct logic but with excessive time complexity (e.g., O(N²) when N=10^5, or unoptimized recursion without memoization). Return ONLY the source code.";
-            default -> "Solve the following problem. Return ONLY the source code.";
-        };
-
-        String prompt = """
-                %s
-                Language: %s
-
-                Title: %s
-
-                Description:
-                %s
-
-                Input:
-                %s
-
-                Output:
-                %s
-
-                Constraints:
-                %s
-                """.formatted(promptType, language, title, description, inputFormat, outputFormat, constraints);
-
-        Map<String, Object> requestBody = Map.of(
-                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt))))
-        );
-        return stripMarkdownFences(executeGeminiRequest(requestBody, "Gemini (Code:" + type + ")"));
-    }
-
     private String buildGenerationPrompt(String problemText, String analysisJson, int count) {
         return """
                 You are an expert Competitive Programming problem setter and testcase engineer.
                 You will receive the original problem and a short local analysis_json produced by Ollama.
                 Use BOTH. The original problem is authoritative; analysis_json is only a hint.
                 If analysis_json describes a different task, ignore it completely.
-                First reconstruct the formal problem specification internally. Only then write artifacts from that spec.
+                First reconstruct the formal problem specification internally. Then output metadata only.
                 If a required input/output/constraint/guarantee is not present in the original problem, write "unknown"
                 in the relevant field instead of guessing. The backend will request a repair instead of using guessed artifacts.
                 Do not introduce concepts, input sections, variables, or constraints that are absent from the original problem.
                 Examples of forbidden drift: inventing DAG/A[i]/s,t for a graph-edge problem that only has u,v,W,type.
+                The backend owns taxonomy-specific testcase strategy and generator code. Your job is metadata extraction.
 
                 Original problem:
                 %s
@@ -137,11 +109,17 @@ public class GeminiTestGenerationService {
                 ABSOLUTE RULE #1 — NEVER GENERATE HUGE RAW TESTCASES
                 NEVER output large arrays, N=100000 raw lines, or manually computed expected outputs.
 
-                ABSOLUTE RULE #2 — SPEC FIRST, LIMITED PROBE CODE ONLY
-                Return ONLY normalized formal specification and test planning metadata.
-                Do NOT include generator, validator, golden-solution, or brute-force source code in this phase.
-                generator_code, golden_solution, validator_code, bruteforce_solution must be empty strings.
-                The only source code allowed is concise executable wrong_solutions[].code probe code.
+                ABSOLUTE RULE #2 — TESTCASE ARTIFACTS ONLY
+                Return ONLY normalized formal specification and testcase-generation artifacts.
+                Do NOT generate standalone user-facing AC/WA/TLE submissions.
+                Provide golden_solution only as an internal C++17 reference oracle used to compute expected testcase outputs.
+                The golden_solution must implement the intended optimal algorithm from the statement/test_plan.
+                It must be a complete compilable C++17 program with #include directives, using namespace/std qualifiers,
+                int main(), stdin parsing exactly matching input_schema, and stdout formatting exactly matching output_format.
+                Never put placeholder prose such as "C++17 internal reference solution" in golden_solution.
+                Do not simulate games, exponent towers, or processes step-by-step when constraints require a formula,
+                modular arithmetic, dynamic programming, or logarithmic/linear-time reasoning.
+                generator_code, validator_code, bruteforce_solution, and wrong_solutions[].code must be empty strings.
 
                 ABSOLUTE RULE #3 — BUG-ORIENTED VALIDATION GATES
                 Do not design tests around a vague quality score. Design them so the backend validation gates can pass:
@@ -158,24 +136,38 @@ public class GeminiTestGenerationService {
                 Inside string values, represent newlines using literal \\n.
                 Inside string values, escape all double-quotes as \\" and all backslashes as \\\\.
                 Because code is forbidden in this phase:
-                - Keep generator_code, golden_solution, validator_code, and bruteforce_solution empty.
-                - wrong_solutions[].code may contain short valid C++17 code that intentionally fails the target bug.
+                - Do not include *_b64 fields.
+                - Keep generator_code, validator_code, bruteforce_solution, and wrong_solutions[].code empty.
+                - golden_solution may contain only the internal C++17 reference oracle, not a user-facing generated answer.
 
                 ABSOLUTE RULE #5 — VIETNAMESE USER-FACING STATEMENT
                 The user-facing problem statement fields MUST be written in Vietnamese:
                 - formatted_description: Vietnamese only, preserving formulas, variable names, and math notation.
                 - input_format: Vietnamese only, clearly explaining every input line/token.
                 - output_format: Vietnamese only, clearly explaining what to print.
+                - constraints: Vietnamese only, formatted as a compact readable list.
                 Keep machine-readable fields such as input_schema, code, identifiers, and JSON keys unchanged.
+
+                ABSOLUTE RULE #6 — WEB DISPLAY-SAFE TEXT FORMAT
+                The web UI renders these fields as escaped plain text with preserved newlines:
+                formatted_description, input_format, output_format, constraints.
+                Therefore:
+                - Do NOT output HTML tags, Markdown tables, code fences, raw <sub>/<sup>, or raw LaTeX-only blocks.
+                - Use short paragraphs and bullet lines beginning with "- " for lists.
+                - Use display-safe math notation: <=, >=, !=, ==, 10^5, 10^9, 2^31-1, 2^63-1, a_i, dp[i], O(n log n).
+                - Preserve comparison direction exactly. Never drop symbols such as <, >, <=, >=.
+                - If the original contains a strict inequality like 1 < n <= 10^5, keep it as plain text exactly.
+                - Do not write angle-bracket placeholders such as <N> or <value>; write `N`, `value`, or plain variable names.
+                - Do not wrap variable names or formulas in backticks; use plain text so the form looks clean.
                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
                 Return EXACTLY this JSON structure:
                 {
-                  "formatted_description": "Mô tả bài toán đã được trình bày bằng tiếng Việt, chia đoạn bằng \\n\\n",
+                  "formatted_description": "Mô tả bài toán bằng tiếng Việt, chia thành các đoạn ngắn bằng \\n\\n. Công thức dùng dạng plain text như a_i, 10^5, x <= y.",
                   "understanding": "Brief summary of the problem logic",
-                  "input_format": "Mô tả chi tiết định dạng dữ liệu vào bằng tiếng Việt",
-                  "output_format": "Mô tả chi tiết định dạng dữ liệu ra bằng tiếng Việt",
-                  "constraints": "Các ràng buộc",
+                  "input_format": "Dòng 1: ...\\nDòng 2: ...\\nCác dòng tiếp theo: ...",
+                  "output_format": "In ra ... trên một dòng. Nếu có nhiều kết quả, mỗi kết quả trên một dòng.",
+                  "constraints": "- 1 <= N <= 10^5\\n- 0 <= a_i <= 10^9\\n- Tổng kích thước dữ liệu không vượt quá ...",
                   "input_schema": {
                     "multiple_test_cases": false,
                     "lines": [
@@ -213,7 +205,7 @@ public class GeminiTestGenerationService {
                     }
                   ],
                   "test_plan": {
-                    "problem_type": "short category",
+                    "problem_type": "one enum value: GRAPH_ALTERNATING_EDGE_SHORTEST_PATH|GRAPH_SHORTEST_PATH|DAG_DP|TREE_DP|GRID_BFS|ARRAY_PREFIX_SUM|ARRAY_TWO_POINTERS|STRING_MATCHING|MATH_NUMBER_THEORY|GENERIC_SCHEMA|UNKNOWN",
                     "intended_solution": "Correct algorithm and complexity",
                     "wrong_solutions": [
                       {
@@ -289,7 +281,7 @@ public class GeminiTestGenerationService {
                   "total_testcases": %d,
                   "generator_language": "cpp",
                   "generator_code": "",
-                  "golden_solution": "",
+                  "golden_solution": "C++17 internal reference solution used only to compute testcase outputs",
                   "bruteforce_solution": "",
                   "bruteforce_language": "cpp",
                   "validator_rules": ["rule 1", "rule 2"],
@@ -306,6 +298,7 @@ public class GeminiTestGenerationService {
 
                 test_plan requirements:
                 - Provide enough normalized detail for a separate local C++ generator model.
+                - test_plan.problem_type must be one of the listed taxonomy enum values, not free prose.
                 - Ground every field in the original problem. If the original statement says every edge has u, v, W, type,
                   then input_schema.edges.columns must contain exactly u, v, W, type in that order.
                 - For graph n,m up to 2e5, specify valid indexing, directedness, self-loop/multi-edge policy, edge weights/types, and max sparse traps.
@@ -319,6 +312,10 @@ public class GeminiTestGenerationService {
                 - It must describe the exact input tokens in order, line by line.
                 - Use only machine-readable JSON, not prose.
                 - Supported line kinds: scalars, array, matrix, edges, queries, grid, string, raw_lines.
+                - Do NOT use wrapper kinds such as loop, repeat, for, foreach, group, block, or section.
+                  Repeated rows must be represented directly as:
+                  edges for graph edges, queries for repeated tuple/query rows, array for one repeated value list,
+                  matrix/grid for 2D repeated values, or raw_lines only when the row shape is genuinely not structured.
                 - For each scalar/array/matrix value include numeric min/max when known.
                 - Use length references such as "N", "M", "Q", "N-1" only when that scalar appears earlier.
                 - For graph-like data include node indexing, directedness, self-loop policy, multi-edge policy, and every column.
@@ -328,14 +325,14 @@ public class GeminiTestGenerationService {
                 edge_cases: at most 3 tiny manually written cases. No huge raw data.
                 checker_code: empty string for unique-output problems.
                 wrong_solutions requirements:
-                - Provide at least 3 plausible wrong solutions when feasible: overflow, greedy, boundary/off-by-one.
-                - Each wrong solution must be executable code, not prose.
+                - Provide at least 3 plausible wrong-solution metadata entries when feasible: overflow, greedy, boundary/off-by-one.
+                - code must be an empty string; the backend may generate executable probes separately.
                 - Keep wrong solutions concise but complete.
                 - Use exact type names from this set whenever relevant: overflow, greedy, boundary, off_by_one, brute_force, tle.
-                - If bug_classes includes overflow, you must include at least one executable wrong_solution with type="overflow".
-                - If bug_classes includes greedy, you must include at least one executable wrong_solution with type="greedy".
-                - If a slow brute-force approach is plausible, include one executable wrong_solution with type="tle" or "brute_force".
-                - For each executable wrong_solution, set killed_by_profiles to the most likely testcase profiles that should defeat it.
+                - If bug_classes includes overflow, include at least one wrong_solution metadata entry with type="overflow".
+                - If bug_classes includes greedy, include at least one wrong_solution metadata entry with type="greedy".
+                - If a slow brute-force approach is plausible, include one wrong_solution metadata entry with type="tle" or "brute_force".
+                - For each wrong_solution, set killed_by_profiles to the most likely testcase profiles that should defeat it.
                 test_profiles requirements:
                 - Use these structured profile names when possible:
                   SAMPLE, SMALL_EXHAUSTIVE, BOUNDARY_MIN, BOUNDARY_MAX,
@@ -349,9 +346,12 @@ public class GeminiTestGenerationService {
                 - SMALL_EXHAUSTIVE, BOUNDARY_MIN/MAX, ADVERSARIAL_GREEDY, and TIE_BREAKING should stay tiny enough for brute-force reasoning.
                 - Add overflow profiles only when numeric overflow is relevant.
                 Final language check before returning:
-                - formatted_description, input_format, and output_format must not be English prose.
-                - If the original statement is English, translate those three fields to Vietnamese.
+                - formatted_description, input_format, output_format, and constraints must not be English prose.
+                - If the original statement is English, translate those four fields to Vietnamese.
                 - Do not translate variable names, constants, sample input/output data, or source code.
+                - Ensure every comparison, exponent, index, and complexity expression remains display-safe plain text:
+                  <=, >=, <, >, 10^5, 2^31-1, a_i, O(n log n).
+                - Never output raw HTML, Markdown tables, or LaTeX-only syntax in user-facing fields.
                 """.formatted(
                 problemText == null ? "" : problemText,
                 analysisJson == null ? "{}" : analysisJson,
@@ -376,7 +376,7 @@ public class GeminiTestGenerationService {
             dto.setConstraints(root.path("constraints").asText(""));
             JsonNode inputSchemaNode = root.path("input_schema");
             if (!inputSchemaNode.isMissingNode() && !inputSchemaNode.isNull()) {
-                dto.setInputSchema(inputSchemaNode.deepCopy());
+                dto.setInputSchema(normalizeInputSchema(inputSchemaNode));
             }
             dto.setCheckerCode(root.path("checker_code").asText(""));
             dto.setValidatorCode(readCodeField(root, "validator_code"));
@@ -481,6 +481,91 @@ public class GeminiTestGenerationService {
                 .replace("\r", "\\r")
                 .replace("\n", "\\n")
                 .replace("\t", "\\t");
+    }
+
+    public JsonNode normalizeInputSchema(JsonNode schema) {
+        if (schema == null || schema.isMissingNode() || schema.isNull()) return schema;
+        ObjectNode normalized = schema.deepCopy();
+        JsonNode lines = normalized.path("lines");
+        if (!lines.isArray()) return normalized;
+
+        ArrayNode normalizedLines = objectMapper.createArrayNode();
+        for (JsonNode line : lines) {
+            appendNormalizedLine(normalizedLines, line);
+        }
+        normalized.set("lines", normalizedLines);
+        return normalized;
+    }
+
+    private void appendNormalizedLine(ArrayNode target, JsonNode line) {
+        String kind = line.path("kind").asText("").trim().toLowerCase();
+        if (!kind.equals("loop") && !kind.equals("repeat") && !kind.equals("for_each")) {
+            target.add(line.deepCopy());
+            return;
+        }
+
+        JsonNode length = firstPresent(line, "length", "count", "times", "repeat");
+        JsonNode body = firstPresent(line, "body", "lines", "items", "line");
+        if (body.isArray() && body.size() == 1 && "scalars".equalsIgnoreCase(body.get(0).path("kind").asText(""))) {
+            target.add(tupleLikeLine("queries", length, body.get(0)));
+            return;
+        }
+        if (body.isObject() && "scalars".equalsIgnoreCase(body.path("kind").asText(""))) {
+            target.add(tupleLikeLine("queries", length, body));
+            return;
+        }
+
+        if (body.isArray()) {
+            for (JsonNode child : body) {
+                target.add(withInheritedLength(child, length));
+            }
+            return;
+        }
+        if (body.isObject()) {
+            target.add(withInheritedLength(body, length));
+            return;
+        }
+
+        ObjectNode rawLines = objectMapper.createObjectNode();
+        rawLines.put("kind", "raw_lines");
+        if (!length.isMissingNode() && !length.isNull()) {
+            rawLines.set("length", length.deepCopy());
+        }
+        target.add(rawLines);
+    }
+
+    private ObjectNode tupleLikeLine(String kind, JsonNode length, JsonNode scalarLine) {
+        ObjectNode tuple = objectMapper.createObjectNode();
+        tuple.put("kind", kind);
+        if (!length.isMissingNode() && !length.isNull()) {
+            tuple.set("length", length.deepCopy());
+        }
+        JsonNode fields = scalarLine.path("fields");
+        if (fields.isArray()) {
+            tuple.set("columns", fields.deepCopy());
+        }
+        return tuple;
+    }
+
+    private JsonNode withInheritedLength(JsonNode line, JsonNode length) {
+        ObjectNode copy = line.deepCopy();
+        String kind = copy.path("kind").asText("").trim().toLowerCase();
+        if (Set.of("array", "string", "edges", "queries", "raw_lines").contains(kind)
+                && copy.path("length").isMissingNode()
+                && !length.isMissingNode()
+                && !length.isNull()) {
+            copy.set("length", length.deepCopy());
+        }
+        return copy;
+    }
+
+    private JsonNode firstPresent(JsonNode node, String... fields) {
+        if (node == null) return objectMapper.missingNode();
+        for (String field : fields) {
+            JsonNode value = node.path(field);
+            if (!value.isMissingNode() && !value.isNull()) return value;
+        }
+        return objectMapper.missingNode();
     }
 
     private String readCodeField(JsonNode root, String plainFieldName) {

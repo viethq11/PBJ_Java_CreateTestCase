@@ -1,0 +1,15 @@
+package com.pbj.service;
+
+public enum ProblemType {
+    GRAPH_ALTERNATING_EDGE_SHORTEST_PATH,
+    GRAPH_SHORTEST_PATH,
+    DAG_DP,
+    TREE_DP,
+    GRID_BFS,
+    ARRAY_PREFIX_SUM,
+    ARRAY_TWO_POINTERS,
+    STRING_MATCHING,
+    MATH_NUMBER_THEORY,
+    GENERIC_SCHEMA,
+    UNKNOWN
+}

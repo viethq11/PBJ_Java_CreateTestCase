@@ -143,11 +143,21 @@
         });
 
         async function pollJob(jobId, onStatus) {
+            const maxWaitMs = 10 * 60 * 1000;
+            const startedAt = Date.now();
             return new Promise((resolve, reject) => {
                 const interval = setInterval(async () => {
                     try {
+                        const clientElapsedMs = Date.now() - startedAt;
+                        if (clientElapsedMs > maxWaitMs) {
+                            clearInterval(interval);
+                            reject(new Error('Quá trình xử lý đã vượt quá 10 phút. Vui lòng kiểm tra log server hoặc thử lại với mô tả Input/Output/Constraints rõ hơn.'));
+                            return;
+                        }
+
                         const r    = await fetch('/api/job/' + jobId);
                         const data = await r.json();
+                        const elapsed = formatElapsed(data.elapsedSeconds || Math.floor(clientElapsedMs / 1000));
 
                         if (data.state === 'DONE') {
                             clearInterval(interval);
@@ -157,7 +167,7 @@
                             clearInterval(interval);
                             reject(new Error(data.error || 'Job thất bại.'));
                         } else {
-                            onStatus('AI đang xử lý (' + data.state + ')...');
+                            onStatus('AI đang xử lý (' + data.state + ', ' + elapsed + ')...');
                         }
                     } catch (err) {
                         clearInterval(interval);
@@ -165,6 +175,13 @@
                     }
                 }, 2500);
             });
+        }
+
+        function formatElapsed(totalSeconds) {
+            const seconds = Math.max(0, Number(totalSeconds) || 0);
+            const minutes = Math.floor(seconds / 60);
+            const rest = seconds % 60;
+            return minutes + 'm ' + String(rest).padStart(2, '0') + 's';
         }
 
         function showOverlay(msg) {

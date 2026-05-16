@@ -32,6 +32,7 @@ public class AiIntegrationService {
     private final OllamaGeneratorService ollamaGeneratorService;
     private final GeminiTestGenerationService geminiTestGenerationService;
     private final FormalSpecValidationService formalSpecValidationService;
+    private final SystemTestcaseGeneratorService systemTestcaseGeneratorService;
     private final ObjectMapper objectMapper;
 
     public AiResponseDTO generateTestCases(String problemDescription, List<String> base64Images, int count) {
@@ -44,7 +45,7 @@ public class AiIntegrationService {
 
         Optional<AiResponseDTO> cachedDto = readCache(cacheKey, AiResponseDTO.class, "pipeline");
         if (!bypassCache && cachedDto.isPresent()) {
-            return cachedDto.get();
+            return normalizeArtifacts(cachedDto.get());
         }
 
         if (bypassCache) {
@@ -59,7 +60,7 @@ public class AiIntegrationService {
                                                   boolean bypassCache, String sourceFingerprint, String cacheKey) {
         Optional<AiResponseDTO> cachedDto = readCache(cacheKey, AiResponseDTO.class, "pipeline-after-queue");
         if (!bypassCache && cachedDto.isPresent()) {
-            return cachedDto.get();
+            return normalizeArtifacts(cachedDto.get());
         }
 
         String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint);
@@ -70,36 +71,27 @@ public class AiIntegrationService {
         Optional<AiResponseDTO> cachedGeminiDto = readCache(geminiKey, AiResponseDTO.class, "gemini-artifacts");
         AiResponseDTO dto;
         if (!bypassCache && cachedGeminiDto.isPresent()) {
-            dto = cachedGeminiDto.get();
+            dto = normalizeArtifacts(cachedGeminiDto.get());
         } else {
             System.out.println("INFO: [AI Pipeline] Step 2 - Gemini test generation...");
-            dto = geminiTestGenerationService.generateTestArtifacts(problemText, analysisJson, count);
+            dto = normalizeArtifacts(geminiTestGenerationService.generateTestArtifacts(problemText, analysisJson, count));
             saveCache(geminiKey, dto, "gemini-artifacts");
         }
         formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
 
-        String generatorSpecJson = buildGeneratorSpecJson(normalizedProblemText, analysisJson, dto);
-        System.out.println("INFO: [AI Pipeline] Step 3 - Ollama local C++ generator...");
-        String generatorCode = ollamaGeneratorService.generateGenerator(generatorSpecJson);
+        System.out.println("INFO: [AI Pipeline] Step 3 - System testcase generator...");
+        String generatorCode = systemTestcaseGeneratorService.buildGenerator(dto, normalizedProblemText);
         dto.setGeneratorCode(generatorCode);
         dto.setGeneratorLanguage("cpp");
 
         return dto;
     }
 
-    public String generateAcceptedCode(String title, String description, String inputFormat,
-                                       String outputFormat, String constraints, String language) {
-        return generateCodeWithCache(title, description, inputFormat, outputFormat, constraints, language, "AC");
-    }
-
-    public String generateWrongAnswerCode(String title, String description, String inputFormat,
-                                          String outputFormat, String constraints, String language) {
-        return generateCodeWithCache(title, description, inputFormat, outputFormat, constraints, language, "WA");
-    }
-
-    public String generateTimeLimitExceededCode(String title, String description, String inputFormat,
-                                                String outputFormat, String constraints, String language) {
-        return generateCodeWithCache(title, description, inputFormat, outputFormat, constraints, language, "TLE");
+    private AiResponseDTO normalizeArtifacts(AiResponseDTO dto) {
+        if (dto != null && dto.getInputSchema() != null) {
+            dto.setInputSchema(geminiTestGenerationService.normalizeInputSchema(dto.getInputSchema()));
+        }
+        return dto;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -178,44 +170,6 @@ public class AiIntegrationService {
         String analysisJson = ollamaAnalysisService.analyzeProblem(normalizedProblemText);
         saveCache(analysisKey, analysisJson, "ollama-analysis");
         return analysisJson;
-    }
-
-    private String generateCodeWithCache(String title, String description, String inputFormat,
-                                         String outputFormat, String constraints, String language, String type) {
-        String cacheKey = "code_" + type + "_" + generateHash(title + description + inputFormat + outputFormat + constraints + language);
-        Optional<AiCache> cached = aiCacheRepository.findByRequestHash(cacheKey);
-        if (cached.isPresent()) {
-            try {
-                System.out.println("INFO: AI Cache Hit for code. Hash: " + cacheKey);
-                return objectMapper.readValue(cached.get().getResponse(), String.class);
-            } catch (Exception e) {
-                System.err.println("WARN: Failed to read code from AI Cache: " + e.getMessage());
-            }
-        }
-
-        return aiJobQueueService.runQueued("code:" + type + ":" + cacheKey, () -> generateCodeQueued(
-                title, description, inputFormat, outputFormat, constraints, language, type, cacheKey));
-    }
-
-    private String generateCodeQueued(String title, String description, String inputFormat,
-                                      String outputFormat, String constraints, String language,
-                                      String type, String cacheKey) {
-        Optional<String> cachedAfterQueue = readCache(cacheKey, String.class, "code-after-queue");
-        if (cachedAfterQueue.isPresent()) {
-            return cachedAfterQueue.get();
-        }
-
-        String code = geminiTestGenerationService.generateCode(
-                title, description, inputFormat, outputFormat, constraints, language, type);
-        try {
-            AiCache cacheEntry = new AiCache();
-            cacheEntry.setRequestHash(cacheKey);
-            cacheEntry.setResponse(objectMapper.writeValueAsString(code));
-            aiCacheRepository.save(cacheEntry);
-        } catch (Exception e) {
-            System.err.println("WARN: Failed to save generated code to AI Cache: " + e.getMessage());
-        }
-        return code;
     }
 
     private <T> Optional<T> readCache(String cacheKey, Class<T> valueType, String label) {

@@ -121,6 +121,7 @@ public class ProblemService {
         return testCaseRepository.findByProblemId(problemId);
     }
 
+    @Transactional
     public CodeExecutionService.SubmissionResult runCodeForProblem(Long problemId,
                                                                    String sourceCode,
                                                                    String language,
@@ -129,34 +130,14 @@ public class ProblemService {
         if (p == null) return null;
 
         List<TestCase> testcases = getTestCases(problemId);
-        return codeExecutionService.runCode(sourceCode, language, testcases, p.getTimeLimit(), p.getCheckerCode(), expectedStatus);
-    }
-
-    public String generateAcceptedCode(Long problemId, String language) {
-        Problem problem = getProblem(problemId);
-        if (problem == null) throw new IllegalArgumentException("Problem not found");
-        return aiIntegrationService.generateAcceptedCode(
-                problem.getTitle(), problem.getDescription(),
-                problem.getInputFormat(), problem.getOutputFormat(),
-                problem.getConstraints(), language);
-    }
-
-    public String generateWrongAnswerCode(Long problemId, String language) {
-        Problem problem = getProblem(problemId);
-        if (problem == null) throw new IllegalArgumentException("Problem not found");
-        return aiIntegrationService.generateWrongAnswerCode(
-                problem.getTitle(), problem.getDescription(),
-                problem.getInputFormat(), problem.getOutputFormat(),
-                problem.getConstraints(), language);
-    }
-
-    public String generateTimeLimitExceededCode(Long problemId, String language) {
-        Problem problem = getProblem(problemId);
-        if (problem == null) throw new IllegalArgumentException("Problem not found");
-        return aiIntegrationService.generateTimeLimitExceededCode(
-                problem.getTitle(), problem.getDescription(),
-                problem.getInputFormat(), problem.getOutputFormat(),
-                problem.getConstraints(), language);
+        CodeExecutionService.SubmissionResult result =
+                codeExecutionService.runCode(sourceCode, language, testcases, p.getTimeLimit(), p.getCheckerCode(), expectedStatus);
+        if (result != null
+                && result.status == CodeExecutionService.RunResult.AC
+                && expectedStatus == CodeExecutionService.RunResult.AC) {
+            persistAcceptedSolution(p, sourceCode, language);
+        }
+        return result;
     }
 
     // ======================================================================
@@ -168,15 +149,16 @@ public class ProblemService {
      * and returns the job ID so the frontend can poll /api/job/{id}.
      */
     public String submitGenerateProblem(String title, String description, List<MultipartFile> images) {
+        List<String> base64Images = encodeImages(images);
         String jobId = jobQueueService.createJob("GENERATE");
-        judgeTaskExecutor.execute(() -> generateProblemAsync(jobId, title, description, images));
+        judgeTaskExecutor.execute(() -> generateProblemAsync(jobId, title, description, base64Images));
         return jobId;
     }
 
-    public void generateProblemAsync(String jobId, String title, String description, List<MultipartFile> images) {
+    public void generateProblemAsync(String jobId, String title, String description, List<String> base64Images) {
         jobQueueService.updateState(jobId, JobQueueService.JobState.RUNNING);
         try {
-            Problem p = generateAndSaveProblem(title, description, images);
+            Problem p = generateAndSaveProblemFromBase64(title, description, base64Images);
             jobQueueService.completeJob(jobId, p.getId());
         } catch (Exception e) {
             jobQueueService.failJob(jobId, e.getMessage());
@@ -236,29 +218,40 @@ public class ProblemService {
     @Transactional
     public Problem generateAndSaveProblem(String title, String description, List<MultipartFile> images) {
         List<String> base64Images = encodeImages(images);
+        return generateAndSaveProblemFromBase64(title, description, base64Images);
+    }
+
+    @Transactional
+    public Problem generateAndSaveProblemFromBase64(String title, String description, List<String> base64Images) {
         Problem p = null;
 
         try {
-            AiResponseDTO dto = aiIntegrationService.generateTestCases(description, base64Images, GENERATOR_RUNS.length);
-            ensureLocalArtifacts(dto);
-            dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
-            formalSpecValidationService.validateForGeneration(dto);
-            formalSpecValidationService.validateAgainstSource(description, dto);
-
-            p = buildProblem(title, description, dto);
-            p = problemRepository.save(p);
-
-            String goldenCode = resolveGoldenSolution(p, dto);
-
-            if (goldenCode != null && !goldenCode.isBlank()) {
-                GenerationOutcome outcome = generateTestCasesFromCode(p, dto, goldenCode);
-                verifyGenerationResult(p, outcome, p.getId(), goldenCode, dto);
-            } else {
-                saveEdgeCases(p, dto.getEdgeCases(), goldenCode);
-            }
-
-            aiIntegrationService.saveValidatedTestGeneration(description, base64Images, GENERATOR_RUNS.length, dto);
+            AiResponseDTO dto = prepareGenerationDto(description, base64Images, false);
+            p = saveProblemMetadata(null, title, description, dto);
+            completeTestGeneration(p, dto, description, base64Images, false);
             return p;
+        } catch (GeneratedTestcaseArtifactException e) {
+            aiIntegrationService.evictTestGenerationCache(description, base64Images, GENERATOR_RUNS.length);
+            if (p != null && p.getId() != null) {
+                testCaseStorageService.deleteAllForProblem(p.getId());
+            }
+            if (e.likelySchemaMismatch() || e.likelyGoldenReferenceFailure()) {
+                try {
+                    String reason = e.likelySchemaMismatch() ? "Schema mismatch" : "Golden reference failure";
+                    System.err.println("WARN: " + reason + " suspected; retrying generation once with evicted AI artifacts.");
+                    Problem retried = retryProblemGenerationWithFreshArtifacts(p, title, description, base64Images);
+                    if (retried != null) {
+                        return retried;
+                    }
+                } catch (RuntimeException retryEx) {
+                    System.err.println("WARN: Fresh-artifact retry failed: " + retryEx.getMessage());
+                }
+                String guidance = e.likelySchemaMismatch()
+                        ? " Please add or correct the textual Input/Output/Constraints; the OCR/image-derived input_schema appears inconsistent with generated inputs."
+                        : " The generated AC reference solution could not compile/run on valid generated inputs even after a fresh retry.";
+                throw new IllegalStateException(e.getMessage() + guidance, e);
+            }
+            throw e;
         } catch (RuntimeException e) {
             aiIntegrationService.evictTestGenerationCache(description, base64Images, GENERATOR_RUNS.length);
             if (p != null && p.getId() != null) {
@@ -273,6 +266,51 @@ public class ProblemService {
         return generateAndSaveProblem(title, description, List.of());
     }
 
+    private Problem retryProblemGenerationWithFreshArtifacts(Problem existingProblem, String title,
+                                                            String description, List<String> base64Images) {
+        AiResponseDTO dto = prepareGenerationDto(description, base64Images, true);
+        Problem problem = saveProblemMetadata(existingProblem, title, description, dto);
+        completeTestGeneration(problem, dto, description, base64Images, true);
+        return problem;
+    }
+
+    private AiResponseDTO prepareGenerationDto(String description, List<String> base64Images, boolean bypassCache) {
+        AiResponseDTO dto = aiIntegrationService.generateTestCases(
+                description, base64Images, GENERATOR_RUNS.length, bypassCache);
+        ensureLocalArtifacts(dto);
+        dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
+        formalSpecValidationService.validateForGeneration(dto);
+        formalSpecValidationService.validateAgainstSource(description, dto);
+        return dto;
+    }
+
+    private Problem saveProblemMetadata(Problem existingProblem, String title, String description, AiResponseDTO dto) {
+        Problem problem = existingProblem == null ? buildProblem(title, description, dto) : existingProblem;
+        if (existingProblem != null) {
+            problem.setTitle(title);
+            applyProblemMetadata(problem, dto);
+        }
+        return problemRepository.save(problem);
+    }
+
+    private void completeTestGeneration(Problem problem, AiResponseDTO dto, String description,
+                                        List<String> base64Images, boolean requireGoldenCode) {
+        String goldenCode = resolveGoldenSolution(problem, dto);
+        if (goldenCode == null || goldenCode.isBlank()) {
+            if (!requireGoldenCode) {
+                saveEdgeCases(problem, dto.getEdgeCases(), goldenCode, new RejectionStats());
+                aiIntegrationService.saveValidatedTestGeneration(description, base64Images, GENERATOR_RUNS.length, dto);
+                return;
+            }
+            throw new IllegalStateException(
+                    "Cannot retry testcase generation: failed to obtain a valid AC reference solution.");
+        }
+
+        GenerationOutcome outcome = generateTestCasesFromCode(problem, dto, goldenCode);
+        verifyGenerationResult(problem, outcome, problem.getId(), goldenCode, dto);
+        aiIntegrationService.saveValidatedTestGeneration(description, base64Images, GENERATOR_RUNS.length, dto);
+    }
+
     @Transactional
     public void regenerateTestCases(Long problemId) {
         Problem problem = getProblem(problemId);
@@ -281,12 +319,7 @@ public class ProblemService {
         // Delete all disk files + DB rows
         testCaseStorageService.deleteAllForProblem(problemId);
 
-        AiResponseDTO dto = aiIntegrationService.generateTestCases(
-                problem.getDescription(), new ArrayList<>(), GENERATOR_RUNS.length, false);
-        ensureLocalArtifacts(dto);
-        dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
-        formalSpecValidationService.validateForGeneration(dto);
-        formalSpecValidationService.validateAgainstSource(problem.getDescription(), dto);
+        AiResponseDTO dto = prepareGenerationDto(problem.getDescription(), new ArrayList<>(), false);
 
         if (dto.getConstraints() != null && !dto.getConstraints().isBlank()) {
             updateProblemMetadata(problem, dto);
@@ -321,12 +354,12 @@ public class ProblemService {
         Set<String> fingerprints = new HashSet<>();
         AtomicInteger savedCount = new AtomicInteger(0);
         AtomicInteger generatedCount = new AtomicInteger(0);
-        AtomicInteger rejectedGeneratedCount = new AtomicInteger(0);
+        RejectionStats rejectionStats = new RejectionStats();
         GenerationQualitySummary quality = new GenerationQualitySummary();
         quality.hasBruteForceArtifact = dto.getBruteForceSolution() != null && !dto.getBruteForceSolution().isBlank();
 
         // 1. Manually crafted edge cases first
-        savedCount.addAndGet(saveEdgeCases(problem, dto.getEdgeCases(), goldenCode));
+        savedCount.addAndGet(saveEdgeCases(problem, dto.getEdgeCases(), goldenCode, rejectionStats));
 
         // 2. Generator-based cases
         if (generatorCode != null && !generatorCode.isBlank()) {
@@ -342,7 +375,7 @@ public class ProblemService {
                 if (!generatorResult.success) {
                     System.err.println("DEBUG: Generator failed for seed=" + seed
                             + " profile=" + profile + ": " + generatorResult.message);
-                    rejectedGeneratedCount.incrementAndGet();
+                    rejectionStats.generatorFailed++;
                     continue;
                 }
 
@@ -353,21 +386,23 @@ public class ProblemService {
                 if (!validatorResult.valid) {
                     System.err.println("DEBUG: Validator rejected generated input for seed=" + seed
                             + " profile=" + profile + ": " + validatorResult.message);
-                    rejectedGeneratedCount.incrementAndGet();
+                    rejectionStats.recordValidatorReject(validatorResult.message);
                     continue;
                 }
 
-                String expectedOutput = codeExecutionService.runGoldenSolution(
+                CodeExecutionService.GoldenResult goldenResult = codeExecutionService.runGoldenSolutionDetailed(
                         goldenCode, "cpp", generatedInput, problem.getTimeLimit());
 
-                if (expectedOutput == null || expectedOutput.isBlank()) {
-                    System.err.println("DEBUG: Golden solution failed for seed=" + seed);
-                    rejectedGeneratedCount.incrementAndGet();
+                if (!goldenResult.success) {
+                    rejectionStats.recordGoldenFailure(goldenResult.message);
+                    System.err.println("DEBUG: Golden solution failed for seed=" + seed
+                            + ": " + goldenResult.message);
                     continue;
                 }
+                String expectedOutput = goldenResult.output;
 
                 if (!isUniqueTestCase(generatedInput, expectedOutput, fingerprints)) {
-                    rejectedGeneratedCount.incrementAndGet();
+                    rejectionStats.duplicate++;
                     continue;
                 }
 
@@ -390,12 +425,21 @@ public class ProblemService {
 
         if (generatorCode != null && !generatorCode.isBlank()
                 && generatedCount.get() + adversarialCount + minedCount < 8) {
-            throw new IllegalStateException(
+            if (generatedCount.get() + adversarialCount + minedCount == 0 && rejectionStats.goldenFailed > 0) {
+                evictAcceptedCodeCache(problem);
+            }
+            throw new GeneratedTestcaseArtifactException(
                     "Generated testcase artifact is invalid: only "
                     + (generatedCount.get() + adversarialCount + minedCount)
                     + " generator/adversarial cases were accepted, "
-                    + rejectedGeneratedCount.get() + " were rejected or timed out. "
-                    + "The cached Gemini generator/validator has been evicted; please try again.");
+                    + rejectionStats.totalRejected() + " were rejected or timed out. "
+                    + rejectionStats.summary() + " "
+                    + (rejectionStats.likelyGoldenReferenceFailure()
+                    ? "The generated AC reference solution failed or timed out on all generated inputs and its cache has been evicted. "
+                    : "")
+                    + "The cached Gemini generator/validator has been evicted; please try again.",
+                    rejectionStats.likelySchemaMismatch(),
+                    rejectionStats.likelyGoldenReferenceFailure());
         }
 
         return new GenerationOutcome(savedCount.get(), quality);
@@ -431,9 +475,10 @@ public class ProblemService {
                         codeExecutionService.runValidatorDetailed(dto.getValidatorCode(), input);
                 if (!validatorResult.valid) continue;
 
-                String goldenOutput = codeExecutionService.runGoldenSolution(
+                CodeExecutionService.GoldenResult goldenResult = codeExecutionService.runGoldenSolutionDetailed(
                         goldenCode, "cpp", input, problem.getTimeLimit());
-                if (goldenOutput == null || goldenOutput.isBlank()) continue;
+                if (!goldenResult.success) continue;
+                String goldenOutput = goldenResult.output;
 
                 if (hasBruteForce && isBruteForceFriendlyProfile(profile)) {
                     String bruteForceOutput = codeExecutionService.runGoldenSolution(
@@ -486,12 +531,14 @@ public class ProblemService {
                 continue;
             }
 
-            String expectedOutput = codeExecutionService.runGoldenSolution(
+            CodeExecutionService.GoldenResult goldenResult = codeExecutionService.runGoldenSolutionDetailed(
                     goldenCode, "cpp", input, problem.getTimeLimit());
-            if (expectedOutput == null || expectedOutput.isBlank()) {
-                System.err.println("DEBUG: Golden solution failed for adversarial testcase.");
+            if (!goldenResult.success) {
+                System.err.println("DEBUG: Golden solution failed for adversarial testcase: "
+                        + goldenResult.message);
                 continue;
             }
+            String expectedOutput = goldenResult.output;
 
             if (!isUniqueTestCase(input, expectedOutput, fingerprints)) {
                 continue;
@@ -515,29 +562,19 @@ public class ProblemService {
 
         String language = dto.getGeneratorLanguage() != null ? dto.getGeneratorLanguage() : "python";
         String[] probeSizes = buildGeneratorProbeProfiles();
-        int repairs = 0;
         String lastError = "";
         logGeneratorDebug("initial", generatorCode);
 
-        while (repairs <= 3) {
-            ProbeResult probe = probeGenerator(dto, generatorCode, language, probeSizes);
-            if (probe.valid) {
-                dto.setGeneratorCode(generatorCode);
-                dto.setGeneratorLanguage(language);
-                return generatorCode;
-            }
-
-            lastError = probe.message;
-            if (repairs == 3) break;
-            repairs++;
-            System.err.println("WARN: Generator failed probe validation. Repair attempt " + repairs + "/3: " + lastError);
-            generatorCode = aiIntegrationService.repairGenerator(dto, generatorCode, lastError);
-            logGeneratorDebug("repair_" + repairs, generatorCode);
-            language = "cpp";
-            dto.setGeneratorLanguage("cpp");
+        ProbeResult initialProbe = probeGenerator(dto, generatorCode, language, probeSizes);
+        if (initialProbe.valid) {
+            dto.setGeneratorCode(generatorCode);
+            dto.setGeneratorLanguage(language);
+            return generatorCode;
         }
+        lastError = initialProbe.message;
+        System.err.println("WARN: System generator failed probe validation: " + lastError);
 
-        System.err.println("WARN: AI generator repair failed. Trying backend fallback generator candidates.");
+        System.err.println("WARN: Trying backend fallback generator candidates.");
         List<String> fallbackCandidates = fallbackGeneratorFactory.createCandidates(dto);
         for (int i = 0; i < fallbackCandidates.size(); i++) {
             String candidate = fallbackCandidates.get(i);
@@ -603,7 +640,8 @@ public class ProblemService {
         }
     }
 
-    private int saveEdgeCases(Problem problem, List<AiResponseDTO.TestCaseDTO> edgeCases, String goldenCode) {
+    private int saveEdgeCases(Problem problem, List<AiResponseDTO.TestCaseDTO> edgeCases,
+                              String goldenCode, RejectionStats rejectionStats) {
         if (edgeCases == null || edgeCases.isEmpty()) return 0;
 
         int saved = 0;
@@ -613,21 +651,33 @@ public class ProblemService {
 
             if (!codeExecutionService.runValidator(problem.getValidatorCode(), input)) {
                 System.err.println("DEBUG: Validator rejected manual edge case.");
+                if (rejectionStats != null) {
+                    rejectionStats.validatorRejected++;
+                }
                 continue;
             }
 
             String expectedOutput;
             if (goldenCode != null && !goldenCode.isBlank()) {
-                expectedOutput = codeExecutionService.runGoldenSolution(
+                CodeExecutionService.GoldenResult goldenResult = codeExecutionService.runGoldenSolutionDetailed(
                         goldenCode, "cpp", input, 5000);
+                expectedOutput = goldenResult.success ? goldenResult.output : null;
                 if (expectedOutput == null) {
+                    if (rejectionStats != null) {
+                        rejectionStats.recordGoldenFailure(goldenResult.message);
+                    }
                     expectedOutput = ec.getExpectedOutput();
                 }
             } else {
                 expectedOutput = ec.getExpectedOutput();
             }
 
-            if (expectedOutput == null || expectedOutput.isBlank()) continue;
+            if (expectedOutput == null || expectedOutput.isBlank()) {
+                if (rejectionStats != null) {
+                    rejectionStats.recordGoldenFailure("Manual edge case has no expected output.");
+                }
+                continue;
+            }
 
             testCaseStorageService.saveTestCase(
                     problem, input, expectedOutput,
@@ -649,7 +699,8 @@ public class ProblemService {
                     try {
                         base64Images.add(Base64.getEncoder().encodeToString(file.getBytes()));
                     } catch (Exception e) {
-                        System.err.println("WARN: Failed to encode image: " + e.getMessage());
+                        throw new IllegalStateException("Failed to read uploaded image before background processing: "
+                                + e.getMessage(), e);
                     }
                 }
             }
@@ -677,13 +728,17 @@ public class ProblemService {
     }
 
     private void updateProblemMetadata(Problem problem, AiResponseDTO dto) {
+        applyProblemMetadata(problem, dto);
+        problemRepository.save(problem);
+    }
+
+    private void applyProblemMetadata(Problem problem, AiResponseDTO dto) {
         if (dto.getConstraints()  != null) problem.setConstraints(dto.getConstraints());
         if (dto.getInputFormat()  != null) problem.setInputFormat(dto.getInputFormat());
         if (dto.getOutputFormat() != null) problem.setOutputFormat(dto.getOutputFormat());
         if (dto.getCheckerCode()  != null) problem.setCheckerCode(dto.getCheckerCode());
         if (dto.getValidatorCode() != null) problem.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
         if (dto.getTestPlan() != null) problem.setTestPlan(toJson(dto.getTestPlan()));
-        problemRepository.save(problem);
     }
 
     private String sanitizeValidatorCode(String validatorCode) {
@@ -730,11 +785,45 @@ public class ProblemService {
 
     private String resolveGoldenSolution(Problem problem, AiResponseDTO dto) {
         if (dto.getGoldenSolution() != null && !dto.getGoldenSolution().isBlank()) {
-            System.out.println("INFO: Using golden solution from AI analysis response.");
-            return dto.getGoldenSolution();
+            if (!looksLikeCxxProgram(dto.getGoldenSolution())) {
+                System.err.println("WARN: Ignoring non-compilable-looking AI golden_solution artifact.");
+            } else {
+                System.out.println("INFO: Using golden solution from AI analysis response.");
+                return dto.getGoldenSolution();
+            }
         }
-        System.out.println("INFO: No golden solution in AI response, requesting separately...");
-        return generateAcceptedCode(problem.getId(), "cpp");
+        if (problem.getAcceptedSolutionCode() != null && !problem.getAcceptedSolutionCode().isBlank()) {
+            System.out.println("INFO: Using stored AC reference solution from DB.");
+            return problem.getAcceptedSolutionCode();
+        }
+        System.out.println("INFO: No golden solution in AI artifact; standalone AC code generation is disabled.");
+        return null;
+    }
+
+    private boolean looksLikeCxxProgram(String code) {
+        if (code == null || code.isBlank()) return false;
+        String lower = code.toLowerCase(Locale.ROOT);
+        if (lower.contains("internal reference solution") || lower.contains("c++17 internal")) {
+            return false;
+        }
+        return Pattern.compile("\\bint\\s+main\\s*\\(").matcher(code).find()
+                || Pattern.compile("\\bauto\\s+main\\s*\\(").matcher(code).find();
+    }
+
+    private void persistAcceptedSolution(Problem problem, String sourceCode, String language) {
+        if (problem == null || problem.getId() == null || sourceCode == null || sourceCode.isBlank()) return;
+        problem.setAcceptedSolutionCode(sourceCode);
+        problem.setAcceptedSolutionLanguage(language == null || language.isBlank() ? "cpp" : language);
+        problemRepository.save(problem);
+        System.out.println("INFO: Stored AC reference solution for problem " + problem.getId() + ".");
+    }
+
+    private void evictAcceptedCodeCache(Problem problem) {
+        if (problem == null) return;
+        problem.setAcceptedSolutionCode(null);
+        problem.setAcceptedSolutionLanguage(null);
+        problemRepository.save(problem);
+        System.err.println("WARN: Cleared stored AC reference solution because it failed every generated testcase.");
     }
 
     private boolean isUniqueTestCase(String input, String output, Set<String> fingerprints) {
@@ -776,6 +865,7 @@ public class ProblemService {
         if (acResult == null || acResult.status != CodeExecutionService.RunResult.AC) {
             throw new IllegalStateException("AC reference solution did not pass all generated testcases.");
         }
+        persistAcceptedSolution(problem, goldenCode, "cpp");
 
         String wrongAnswerProbe = """
                 #include <iostream>
@@ -799,23 +889,6 @@ public class ProblemService {
             throw new IllegalStateException("Runtime cannot reliably classify TLE.");
         }
 
-        try {
-            String slowButCorrectProbe = generateTimeLimitExceededCode(problem.getId(), "cpp");
-            if (slowButCorrectProbe != null && !slowButCorrectProbe.isBlank()) {
-                CodeExecutionService.SubmissionResult slowResult = codeExecutionService.runCode(
-                        slowButCorrectProbe, "cpp", testcases,
-                        problem.getTimeLimit(), problem.getCheckerCode(), null);
-                if (slowResult != null && slowResult.status == CodeExecutionService.RunResult.AC) {
-                    System.err.println(
-                            "WARNING: AI-generated slow/TLE probe still gets AC. " +
-                            "Keeping testcase set because runtime TLE sanity and WA probe gates passed.");
-                }
-            }
-        } catch (IllegalStateException e) {
-            throw e;
-        } catch (Exception e) {
-            System.err.println("WARNING: Could not run generated TLE probe: " + e.getMessage());
-        }
     }
 
     private Set<String> validateWrongSolutionCoverage(Problem problem, List<TestCase> testcases, AiResponseDTO dto) {
@@ -853,7 +926,14 @@ public class ProblemService {
             throw new IllegalStateException("Weak tests: missing small/exhaustive profile coverage.");
         }
         if (!report.hasLargeOrStressCoverage) {
-            throw new IllegalStateException("Weak tests: missing large/stress profile coverage.");
+            if (report.hasMediumCoverage && report.hasAdversarialCoverage) {
+                System.err.println(
+                        "WARNING: Test suite has no accepted large/stress testcase. " +
+                        "Keeping it because medium and adversarial coverage passed; " +
+                        "large/stress candidates may have been skipped when the internal reference oracle timed out.");
+            } else {
+                throw new IllegalStateException("Weak tests: missing large/stress profile coverage.");
+            }
         }
         if (!report.hasAdversarialCoverage) {
             throw new IllegalStateException("Weak tests: missing adversarial or bug-oriented profile coverage.");
@@ -894,6 +974,11 @@ public class ProblemService {
         boolean hasLargeOrStressCoverage = containsProfileToken(quality.acceptedProfiles, "large", "stress", "max");
         if (hasLargeOrStressCoverage) {
             signals.add("large_or_stress");
+        }
+
+        boolean hasMediumCoverage = containsProfileToken(quality.acceptedProfiles, "medium");
+        if (hasMediumCoverage) {
+            signals.add("medium");
         }
 
         boolean hasAdversarialCoverage = containsProfileToken(
@@ -950,6 +1035,7 @@ public class ProblemService {
                 hasBruteForceVerification,
                 hasBoundaryCoverage,
                 hasSmallCoverage,
+                hasMediumCoverage,
                 hasLargeOrStressCoverage,
                 hasAdversarialCoverage,
                 hasOverflowRisk,
@@ -1148,6 +1234,84 @@ public class ProblemService {
 
     private record GenerationOutcome(int savedCount, GenerationQualitySummary quality) {}
 
+    private static class GeneratedTestcaseArtifactException extends IllegalStateException {
+        private final boolean likelySchemaMismatch;
+        private final boolean likelyGoldenReferenceFailure;
+
+        GeneratedTestcaseArtifactException(String message, boolean likelySchemaMismatch,
+                                           boolean likelyGoldenReferenceFailure) {
+            super(message);
+            this.likelySchemaMismatch = likelySchemaMismatch;
+            this.likelyGoldenReferenceFailure = likelyGoldenReferenceFailure;
+        }
+
+        boolean likelySchemaMismatch() {
+            return likelySchemaMismatch;
+        }
+
+        boolean likelyGoldenReferenceFailure() {
+            return likelyGoldenReferenceFailure;
+        }
+    }
+
+    private static class RejectionStats {
+        int validatorRejected;
+        int validatorUnexpectedExtraTokens;
+        int generatorFailed;
+        int goldenFailed;
+        int duplicate;
+        String lastGoldenFailure;
+
+        void recordValidatorReject(String message) {
+            validatorRejected++;
+            if (message != null && message.toLowerCase(Locale.ROOT).contains("unexpected extra tokens")) {
+                validatorUnexpectedExtraTokens++;
+            }
+        }
+
+        void recordGoldenFailure(String message) {
+            goldenFailed++;
+            if (message != null && !message.isBlank()) {
+                lastGoldenFailure = message;
+            }
+        }
+
+        int totalRejected() {
+            return validatorRejected + generatorFailed + goldenFailed + duplicate;
+        }
+
+        boolean likelySchemaMismatch() {
+            return validatorUnexpectedExtraTokens > 0
+                    && validatorUnexpectedExtraTokens >= Math.max(1, validatorRejected / 2);
+        }
+
+        boolean likelyGoldenReferenceFailure() {
+            return goldenFailed > 0
+                    && validatorRejected == 0
+                    && generatorFailed == 0
+                    && duplicate == 0;
+        }
+
+        String summary() {
+            List<String> parts = new ArrayList<>();
+            if (validatorRejected > 0) {
+                String detail = validatorUnexpectedExtraTokens > 0
+                        ? " (" + validatorUnexpectedExtraTokens + " unexpected-extra-token/schema mismatches)"
+                        : "";
+                parts.add("validator rejected " + validatorRejected + detail);
+            }
+            if (goldenFailed > 0) {
+                String detail = lastGoldenFailure == null || lastGoldenFailure.isBlank()
+                        ? ""
+                        : " (last: " + lastGoldenFailure + ")";
+                parts.add("golden solution failed " + goldenFailed + detail);
+            }
+            if (duplicate > 0) parts.add("duplicates " + duplicate);
+            if (generatorFailed > 0) parts.add("generator failed/timed out " + generatorFailed);
+            return parts.isEmpty() ? "No rejection details were recorded." : "Breakdown: " + String.join(", ", parts) + ".";
+        }
+    }
+
     static class GenerationQualitySummary {
         final Set<String> acceptedProfiles = new LinkedHashSet<>();
         final Set<String> killedProbeNames = new LinkedHashSet<>();
@@ -1168,6 +1332,7 @@ public class ProblemService {
                               boolean hasBruteForceVerification,
                               boolean hasBoundaryCoverage,
                               boolean hasSmallCoverage,
+                              boolean hasMediumCoverage,
                               boolean hasLargeOrStressCoverage,
                               boolean hasAdversarialCoverage,
                               boolean hasOverflowRisk,

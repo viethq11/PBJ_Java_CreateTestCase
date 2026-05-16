@@ -62,14 +62,15 @@ public class FormalSpecValidationService {
 
         List<String> errors = new ArrayList<>();
         String source = normalizeForComparison(sourceProblemText);
-        String generated = normalizeForComparison(String.join(" ",
+        String generatedText = String.join(" ",
                 safe(dto.getFormattedDescription()),
                 safe(dto.getUnderstanding()),
                 safe(dto.getInputFormat()),
                 safe(dto.getOutputFormat()),
                 safe(dto.getConstraints()),
                 dto.getTestPlan() == null ? "" : safe(dto.getTestPlan().getProblemType()),
-                dto.getTestPlan() == null ? "" : safe(dto.getTestPlan().getIntendedSolution())));
+                dto.getTestPlan() == null ? "" : safe(dto.getTestPlan().getIntendedSolution()));
+        String generated = normalizeForComparison(generatedText);
 
         Set<String> sourceTokens = significantTokens(source);
         Set<String> generatedTokens = significantTokens(generated);
@@ -77,7 +78,7 @@ public class FormalSpecValidationService {
             Set<String> overlap = new HashSet<>(generatedTokens);
             overlap.retainAll(sourceTokens);
             double overlapRatio = overlap.size() / (double) generatedTokens.size();
-            if (overlapRatio < 0.22d) {
+            if (overlapRatio < 0.22d && !hasStableSchemaGrounding(source, dto.getInputSchema())) {
                 errors.add("generated specification is weakly grounded in the original statement"
                         + " (token overlap " + Math.round(overlapRatio * 100) + "%).");
             }
@@ -160,7 +161,8 @@ public class FormalSpecValidationService {
     private void validatePhantomArrayProblem(List<String> errors, String normalizedSource, JsonNode schema) {
         if (schema == null || schema.isMissingNode() || schema.isNull()) return;
         if (normalizedSource.contains("a[i]") || normalizedSource.contains("a i")
-                || normalizedSource.contains("mang a") || normalizedSource.contains("day a")) {
+                || normalizedSource.contains("mang a") || normalizedSource.contains("day a")
+                || normalizedSource.contains("array a") || normalizedSource.contains("sequence a")) {
             return;
         }
 
@@ -302,6 +304,100 @@ public class FormalSpecValidationService {
             tokens.add(token);
         }
         return tokens;
+    }
+
+    private boolean hasStableSchemaGrounding(String normalizedSource, JsonNode schema) {
+        if (normalizedSource == null || normalizedSource.isBlank()
+                || schema == null || schema.isMissingNode() || schema.isNull()) {
+            return false;
+        }
+
+        Set<String> identifiers = schemaIdentifiers(schema);
+        int matchedIdentifiers = 0;
+        for (String identifier : identifiers) {
+            if (containsToken(normalizedSource, identifier)) {
+                matchedIdentifiers++;
+            }
+        }
+
+        Set<String> numbers = schemaNumbers(schema);
+        int matchedNumbers = 0;
+        for (String number : numbers) {
+            if (containsToken(normalizedSource, number)) {
+                matchedNumbers++;
+            }
+        }
+
+        return matchedIdentifiers >= 2 || (matchedIdentifiers >= 1 && matchedNumbers >= 1);
+    }
+
+    private Set<String> schemaIdentifiers(JsonNode schema) {
+        Set<String> identifiers = new LinkedHashSet<>();
+        JsonNode lines = schema.path("lines");
+        if (!lines.isArray()) return identifiers;
+
+        for (JsonNode line : lines) {
+            String name = normalizeIdentifier(line.path("name").asText(""));
+            if (!name.isBlank()) identifiers.add(name);
+
+            JsonNode fields = line.path("fields");
+            if (fields.isArray()) {
+                for (JsonNode field : fields) {
+                    String fieldName = normalizeIdentifier(field.path("name").asText(""));
+                    if (!fieldName.isBlank()) identifiers.add(fieldName);
+                }
+            }
+
+            JsonNode columns = line.path("columns");
+            if (columns.isArray()) {
+                for (JsonNode column : columns) {
+                    String columnName = normalizeIdentifier(column.path("name").asText(""));
+                    if (!columnName.isBlank()) identifiers.add(columnName);
+                }
+            }
+        }
+        return identifiers;
+    }
+
+    private Set<String> schemaNumbers(JsonNode schema) {
+        Set<String> numbers = new LinkedHashSet<>();
+        collectSchemaNumbers(schema, numbers);
+        return numbers;
+    }
+
+    private void collectSchemaNumbers(JsonNode node, Set<String> numbers) {
+        if (node == null || node.isMissingNode() || node.isNull()) return;
+        if (node.isNumber()) {
+            numbers.add(node.asText());
+            return;
+        }
+        if (node.isTextual()) {
+            String text = node.asText("").trim().replace(",", "");
+            if (text.matches("\\d+")) numbers.add(text);
+            if (text.matches("10\\^\\d+")) numbers.add(text.replace("^", ""));
+            return;
+        }
+        if (node.isArray()) {
+            node.forEach(child -> collectSchemaNumbers(child, numbers));
+            return;
+        }
+        if (node.isObject()) {
+            node.fields().forEachRemaining(entry -> collectSchemaNumbers(entry.getValue(), numbers));
+        }
+    }
+
+    private String normalizeIdentifier(String identifier) {
+        if (identifier == null) return "";
+        return normalizeForComparison(identifier).replaceAll("[^a-z0-9_]", "");
+    }
+
+    private boolean containsToken(String normalizedText, String token) {
+        if (token == null || token.isBlank()) return false;
+        String normalizedToken = normalizeIdentifier(token);
+        if (normalizedToken.isBlank()) return false;
+        return Pattern.compile("(^|\\s)" + Pattern.quote(normalizedToken) + "(\\s|$)")
+                .matcher(normalizedText)
+                .find();
     }
 
     private String safe(String value) {

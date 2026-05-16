@@ -84,4 +84,24 @@ class FallbackGeneratorFactoryTest {
         assertThat(candidates.get(0)).contains("long long C = clampValue(");
         assertThat(candidates.get(0)).contains("min(100000LL, N)");
     }
+
+    @Test
+    void schemaFallbackEmitsTestCountForMultipleTestCases() throws Exception {
+        AiResponseDTO dto = new AiResponseDTO();
+        dto.setInputSchema(objectMapper.readTree("""
+                {
+                  "multiple_test_cases": true,
+                  "lines": [
+                    {"kind": "scalars", "fields": [{"name": "N", "type": "int", "min": 1, "max": 1000000}]},
+                    {"kind": "array", "name": "a", "type": "int", "length": "N", "min": 1, "max": 1000000000}
+                  ]
+                }
+                """));
+
+        List<String> candidates = factory.createCandidates(dto);
+
+        assertThat(candidates.get(0)).contains("cout << T");
+        assertThat(candidates.get(0)).contains("for (long long tc = 0; tc < T; tc++)");
+        assertThat(candidates.get(0)).contains("vars.clear();");
+    }
 }

@@ -79,6 +79,18 @@ public class FallbackGeneratorFactory {
         }
 
         if (!supportedAnyLine) return "";
+        boolean multipleTestCases = schema.path("multiple_test_cases").asBoolean(false);
+        String generatedBody = body.toString();
+        if (multipleTestCases) {
+            generatedBody = """
+                    long long T = (size == "small" ? 3LL : 1LL);
+                    cout << T << "\\n";
+                    for (long long tc = 0; tc < T; tc++) {
+                        vars.clear();
+                    %s
+                    }
+                    """.formatted(indent(generatedBody, "    "));
+        }
 
         return """
                 #include <bits/stdc++.h>
@@ -136,7 +148,7 @@ public class FallbackGeneratorFactory {
                 %s
                     return 0;
                 }
-                """.formatted(indent(body.toString(), "    "));
+                """.formatted(indent(generatedBody, "    "));
     }
 
     private Set<String> collectEdgeLengthRefs(JsonNode lines) {
@@ -201,9 +213,14 @@ public class FallbackGeneratorFactory {
 
         body.append("{\n");
         body.append("    long long len = clampValue(").append(lengthExpr).append(", 0LL, 200000LL);\n");
+        body.append("    long long lo = ").append(lo).append("LL, hi = ").append(hi).append("LL;\n");
+        body.append("    long long span = hi - lo + 1;\n");
+        body.append("    long long start = lo;\n");
+        body.append("    if (span >= len && len > 0) start = lo + (long long)(rng() % (unsigned long long)(span - len + 1));\n");
         body.append("    for (long long i = 0; i < len; i++) {\n");
         body.append("        if (i) cout << ' ';\n");
-        body.append("        cout << chooseValue(rng, size, ").append(lo).append("LL, ").append(hi).append("LL, i);\n");
+        body.append("        if (span >= len) cout << start + i;\n");
+        body.append("        else cout << chooseValue(rng, size, lo, hi, i);\n");
         body.append("    }\n");
         body.append("    cout << \"\\n\";\n");
         body.append("}\n");

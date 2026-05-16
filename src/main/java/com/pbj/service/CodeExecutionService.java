@@ -89,6 +89,18 @@ public class CodeExecutionService {
 
     private record TestExecutionInfo(RunResult result, String actualOutput) {}
 
+    public static class GoldenResult {
+        public final boolean success;
+        public final String output;
+        public final String message;
+
+        public GoldenResult(boolean success, String output, String message) {
+            this.success = success;
+            this.output = output;
+            this.message = message;
+        }
+    }
+
     // ==================================================================
     // PUBLIC: Run a full submission against all testcases
     // ==================================================================
@@ -168,6 +180,11 @@ public class CodeExecutionService {
     // ==================================================================
 
     public String runGoldenSolution(String sourceCode, String language, String input, int timeLimitMs) {
+        GoldenResult result = runGoldenSolutionDetailed(sourceCode, language, input, timeLimitMs);
+        return result.success ? result.output : null;
+    }
+
+    public GoldenResult runGoldenSolutionDetailed(String sourceCode, String language, String input, int timeLimitMs) {
         String dirName = "golden_" + UUID.randomUUID();
         Path   dirPath = Paths.get("/tmp", dirName);
         try {
@@ -178,12 +195,28 @@ public class CodeExecutionService {
             Files.writeString(new File(dirFile, fileName).toPath(), sourceCode);
 
             CompileResult cr = compileProgram(langInfo, dirFile, fileName);
-            if (!cr.success) return null;
+            if (!cr.success) {
+                String message = "Golden solution compilation failed: " + truncate(cr.message, 500);
+                System.err.println("DEBUG: " + message);
+                return new GoldenResult(false, null, message);
+            }
 
             TestExecutionInfo info = executeSingleTest(langInfo, dirFile, fileName, input, "", null, timeLimitMs);
-            return info.actualOutput;
+            if (info.result == RunResult.RE || info.result == RunResult.TLE) {
+                String message = "Golden solution failed with " + info.result
+                        + (info.actualOutput == null || info.actualOutput.isBlank()
+                        ? "" : ": " + truncate(info.actualOutput, 500));
+                System.err.println("DEBUG: " + message);
+                return new GoldenResult(false, null, message);
+            }
+            if (info.actualOutput == null || info.actualOutput.isBlank()) {
+                return new GoldenResult(false, null, "Golden solution produced no output.");
+            }
+            return new GoldenResult(true, info.actualOutput, "OK");
         } catch (Exception e) {
-            return null;
+            String message = "Golden solution execution failed: " + e.getMessage();
+            System.err.println("DEBUG: " + message);
+            return new GoldenResult(false, null, message);
         } finally {
             deleteDir(dirPath.toFile());
         }

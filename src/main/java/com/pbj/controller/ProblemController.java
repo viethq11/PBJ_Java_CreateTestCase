@@ -145,48 +145,10 @@ public class ProblemController {
         return ResponseEntity.ok(Map.of(
                 "state",  job.state.name(),
                 "type",   job.type,
+                "elapsedSeconds", job.elapsedSeconds(),
                 "result", job.result  != null ? job.result  : "",
                 "error",  job.error   != null ? job.error   : ""
         ));
     }
 
-    // ------------------------------------------------------------------
-    // Code auto-generation helpers (still sync — fast Gemini calls)
-    // ------------------------------------------------------------------
-
-    @PostMapping("/api/problem/auto-code")
-    @ResponseBody
-    public ResponseEntity<Map<String, String>> autoGenerateCode(
-            @RequestParam("problemId") Long problemId,
-            @RequestParam("language") String language) {
-        try {
-            return ResponseEntity.ok(Map.of("code", problemService.generateAcceptedCode(problemId, language)));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
-        }
-    }
-
-    @PostMapping("/api/problem/auto-code-wa")
-    @ResponseBody
-    public ResponseEntity<Map<String, String>> autoGenerateWaCode(
-            @RequestParam("problemId") Long problemId,
-            @RequestParam("language") String language) {
-        try {
-            return ResponseEntity.ok(Map.of("code", problemService.generateWrongAnswerCode(problemId, language)));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
-        }
-    }
-
-    @PostMapping("/api/problem/auto-code-tle")
-    @ResponseBody
-    public ResponseEntity<Map<String, String>> autoGenerateTleCode(
-            @RequestParam("problemId") Long problemId,
-            @RequestParam("language") String language) {
-        try {
-            return ResponseEntity.ok(Map.of("code", problemService.generateTimeLimitExceededCode(problemId, language)));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
-        }
-    }
 }

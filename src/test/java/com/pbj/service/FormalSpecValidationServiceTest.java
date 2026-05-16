@@ -147,6 +147,40 @@ class FormalSpecValidationServiceTest {
         assertThatCode(() -> service.validateAgainstSource(source, dto)).doesNotThrowAnyException();
     }
 
+    @Test
+    void acceptsTranslatedVietnameseSpecWhenSchemaAnchorsMatchEnglishSource() throws Exception {
+        AiResponseDTO dto = completeDto("""
+                {
+                  "multiple_test_cases": false,
+                  "lines": [
+                    {
+                      "kind": "scalars",
+                      "fields": [
+                        {"name": "N", "type": "int", "min": 1, "max": 100000},
+                        {"name": "M", "type": "int", "min": 1, "max": 100000}
+                      ]
+                    },
+                    {"kind": "array", "name": "A", "type": "int", "length": "N", "min": 1, "max": 1000000000}
+                  ]
+                }
+                """);
+        dto.setFormattedDescription("Cho một tháp lũy thừa và cần tính kết quả sau khi rút gọn theo mô-đun.");
+        dto.setInputFormat("Dòng đầu chứa N và M. Dòng tiếp theo chứa N số A_i.");
+        dto.setOutputFormat("In ra kết quả cuối cùng.");
+        dto.setConstraints("1 <= N, M <= 100000; 1 <= A_i <= 1000000000.");
+        dto.getTestPlan().setProblemType("MATH_NUMBER_THEORY");
+        dto.getTestPlan().setIntendedSolution("Dùng tính chất modulo và lũy thừa nhanh.");
+
+        String source = """
+                Power Tower
+                Given integers N and M, followed by an array A of N integers.
+                Compute the value of the power tower modulo M.
+                The constraints are 1 <= N, M <= 100000 and 1 <= A_i <= 1000000000.
+                """;
+
+        assertThatCode(() -> service.validateAgainstSource(source, dto)).doesNotThrowAnyException();
+    }
+
     private AiResponseDTO completeDto(String schemaJson) throws Exception {
         AiResponseDTO dto = new AiResponseDTO();
         dto.setInputFormat("Dong 1 chua N M. Dong 2 chua N so. Dong 3 chua M so.");

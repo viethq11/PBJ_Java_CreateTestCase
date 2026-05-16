@@ -47,6 +47,12 @@ public class Problem {
     @Column(name = "test_plan", columnDefinition = "LONGTEXT")
     private String testPlan;
 
+    @Column(name = "accepted_solution_code", columnDefinition = "LONGTEXT")
+    private String acceptedSolutionCode;
+
+    @Column(name = "accepted_solution_language")
+    private String acceptedSolutionLanguage;
+
     @PrePersist
     public void prePersist() {
         if (createdAt == null) createdAt = LocalDateTime.now();

@@ -2,6 +2,7 @@ package com.pbj.service;
 
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.UUID;
@@ -17,11 +18,21 @@ public class JobQueueService {
         public Object result; // For runCode it's SubmissionResult, for regenerate it's "success"
         public String error;
         public String type; // "RUN" or "REGENERATE"
+        public Instant createdAt;
+        public Instant startedAt;
+        public Instant finishedAt;
 
         public JobStatus(String id, String type) {
             this.id = id;
             this.type = type;
             this.state = JobState.PENDING;
+            this.createdAt = Instant.now();
+        }
+
+        public long elapsedSeconds() {
+            Instant start = startedAt != null ? startedAt : createdAt;
+            Instant end = finishedAt != null ? finishedAt : Instant.now();
+            return Math.max(0L, end.getEpochSecond() - start.getEpochSecond());
         }
     }
 
@@ -37,6 +48,9 @@ public class JobQueueService {
         JobStatus job = jobs.get(id);
         if (job != null) {
             job.state = state;
+            if (state == JobState.RUNNING && job.startedAt == null) {
+                job.startedAt = Instant.now();
+            }
         }
     }
 
@@ -45,6 +59,7 @@ public class JobQueueService {
         if (job != null) {
             job.state = JobState.DONE;
             job.result = result;
+            job.finishedAt = Instant.now();
         }
     }
 
@@ -53,6 +68,7 @@ public class JobQueueService {
         if (job != null) {
             job.state = JobState.FAILED;
             job.error = error;
+            job.finishedAt = Instant.now();
         }
     }
 

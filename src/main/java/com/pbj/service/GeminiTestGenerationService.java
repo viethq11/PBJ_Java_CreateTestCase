@@ -86,6 +86,63 @@ public class GeminiTestGenerationService {
         return parseAnalysisResponse(responseText);
     }
 
+    public AiResponseDTO repairFormalSpec(String problemText, AiResponseDTO brokenDto, String validationError) {
+        try {
+            String brokenJson = objectMapper.writeValueAsString(brokenDto);
+
+            String prompt = """
+                    You are repairing a competitive-programming formal specification JSON.
+
+                    Original problem statement is authoritative.
+                    The previous JSON failed backend validation.
+
+                    Validation error:
+                    %s
+
+                    Repair rules:
+                    - Return ONLY valid JSON with the same schema as the previous response.
+                    - Do NOT use "unknown", "unspecified", or "not specified" anywhere.
+                    - Do NOT put "unknown" in input_schema min/max/length/rows/cols.
+                    - Every numeric min/max must be either:
+                      1) a number,
+                      2) an earlier scalar such as N or M,
+                      3) scalar-minus-constant such as N-1.
+                    - If a bound is missing, infer a safe default:
+                      count variables: 1..100000
+                      generic int values: -1000000000..1000000000
+                      positive int values: 1..1000000000
+                      node indices: 1..N
+                      binary flags/types: 0..1
+                    - Put uncertainty into validator_rules or assumptions, not into input_schema.
+                    - golden_solution must remain an empty string.
+
+                    Original problem:
+                    %s
+
+                    Broken JSON:
+                    %s
+                    """.formatted(
+                    validationError == null ? "" : validationError,
+                    problemText == null ? "" : problemText,
+                    brokenJson);
+
+            Map<String, Object> requestBody = Map.of(
+                    "contents", List.of(Map.of(
+                            "parts", List.of(Map.of("text", prompt))
+                    )),
+                    "generationConfig", Map.of(
+                            "responseMimeType", "application/json",
+                            "temperature", 0.1
+                    )
+            );
+
+            String responseText = executeGeminiRequest(requestBody, "Gemini (Formal Spec Repair)");
+            return parseAnalysisResponse(responseText);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to repair formal spec: " + e.getMessage(), e);
+        }
+    }
+
     private String buildGenerationPrompt(String problemText, String analysisJson, int count) {
         return """
                 You are an expert Competitive Programming problem setter and testcase engineer.
@@ -93,8 +150,16 @@ public class GeminiTestGenerationService {
                 Use BOTH. The original problem is authoritative; analysis_json is only a hint.
                 If analysis_json describes a different task, ignore it completely.
                 First reconstruct the formal problem specification internally. Then output metadata only.
-                If a required input/output/constraint/guarantee is not present in the original problem, write "unknown"
-                in the relevant field instead of guessing. The backend will request a repair instead of using guessed artifacts.
+                If a required constraint is not explicitly present in the original problem:
+                - Do NOT write "unknown" in input_schema.min, input_schema.max, length, rows, cols, columns[].min, or columns[].max.
+                - For input_schema numeric bounds, infer the safest competitive-programming default from context.
+                - If the variable is a count such as N, M, Q, T: use min = 1 unless the statement clearly allows 0.
+                - If the variable is a node index: use min = 1 and max = N.
+                - If the variable is a generic integer value and no bound is shown: use min = -1000000000 and max = 1000000000.
+                - If the variable is a positive integer value and no bound is shown: use min = 1 and max = 1000000000.
+                - If the variable is a binary/type flag: use min = 0 and max = 1.
+                - Put any uncertainty in validator_rules or assumptions, NOT in input_schema.
+                - The constraints field must not contain the words unknown, unspecified, or not specified.
                 Do not introduce concepts, input sections, variables, or constraints that are absent from the original problem.
                 Examples of forbidden drift: inventing DAG/A[i]/s,t for a graph-edge problem that only has u,v,W,type.
                 Your job is normalized specification extraction plus executable testcase artifacts.
@@ -151,26 +216,37 @@ public class GeminiTestGenerationService {
                 - constraints: Vietnamese only, formatted as a compact readable list.
                 Keep machine-readable fields such as input_schema, code, identifiers, and JSON keys unchanged.
 
-                ABSOLUTE RULE #6 — WEB DISPLAY-SAFE TEXT FORMAT
-                The web UI renders these fields as escaped plain text with preserved newlines:
+                ABSOLUTE RULE #6 — MARKDOWN + LATEX STATEMENT FORMAT
+                The web UI renders these fields as sanitized Markdown with MathJax:
                 formatted_description, input_format, output_format, constraints.
                 Therefore:
-                - Do NOT output HTML tags, Markdown tables, code fences, raw <sub>/<sup>, or raw LaTeX-only blocks.
+                - All problem statement fields must be written in Markdown.
+                - Use LaTeX math notation for formulas and constraints:
+                  inline math: $...$
+                  block math: $$...$$
+                - Use \\le instead of <= and \\ge instead of >= inside math.
+                - Write indexed values as math such as $a_i$, not plain a_i.
+                - Write powers inside math such as $10^5$.
+                - Write ranges as math such as $1 \\le N \\le 10^6$.
+                - Do NOT write raw forms such as 1 <= N <= 10^6, a_i, or 10^9 in user-facing fields.
+                - Do NOT output HTML tags, code fences, or raw <sub>/<sup>.
                 - Use short paragraphs and bullet lines beginning with "- " for lists.
-                - Use display-safe math notation: <=, >=, !=, ==, 10^5, 10^9, 2^31-1, 2^63-1, a_i, dp[i], O(n log n).
+                - Use Markdown lists where lists are useful.
+                - Do NOT insert hard line breaks inside a normal paragraph just to wrap text visually.
+                  Keep each paragraph on one line in the JSON string, and use blank lines only between paragraphs.
                 - Preserve comparison direction exactly. Never drop symbols such as <, >, <=, >=.
-                - If the original contains a strict inequality like 1 < n <= 10^5, keep it as plain text exactly.
+                - If the original contains a strict inequality like 1 < n <= 10^5, write it as math while preserving the same meaning.
                 - Do not write angle-bracket placeholders such as <N> or <value>; write `N`, `value`, or plain variable names.
-                - Do not wrap variable names or formulas in backticks; use plain text so the form looks clean.
+                - Do not wrap variable names or formulas in backticks unless they are literal code tokens.
                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
                 Return EXACTLY this JSON structure:
                 {
-                  "formatted_description": "Mô tả bài toán bằng tiếng Việt, chia thành các đoạn ngắn bằng \\n\\n. Công thức dùng dạng plain text như a_i, 10^5, x <= y.",
+                  "formatted_description": "Mô tả bài toán bằng tiếng Việt, chia thành các đoạn ngắn bằng \\n\\n. Công thức dùng Markdown + LaTeX như $a_i$, $10^5$, $x \\le y$.",
                   "understanding": "Brief summary of the problem logic",
                   "input_format": "Dòng 1: ...\\nDòng 2: ...\\nCác dòng tiếp theo: ...",
                   "output_format": "In ra ... trên một dòng. Nếu có nhiều kết quả, mỗi kết quả trên một dòng.",
-                  "constraints": "- 1 <= N <= 10^5\\n- 0 <= a_i <= 10^9\\n- Tổng kích thước dữ liệu không vượt quá ...",
+                  "constraints": "- $1 \\le N \\le 10^5$\\n- $0 \\le a_i \\le 10^9$\\n- Tổng kích thước dữ liệu không vượt quá ...",
                   "input_schema": {
                     "multiple_test_cases": false,
                     "lines": [
@@ -323,7 +399,8 @@ public class GeminiTestGenerationService {
                 - Use length references such as "N", "M", "Q", "N-1" only when that scalar appears earlier.
                 - For graph-like data include node indexing, directedness, self-loop policy, multi-edge policy, and every column.
                 - If the statement is complex but specified, provide the safest broad schema that always generates valid input.
-                - If the statement is missing required format/constraint facts, mark them as "unknown"; do not invent them.
+                - If the statement is missing required constraint facts, infer the safest competitive-programming defaults above
+                  and record uncertainty in validator_rules or assumptions instead of input_schema.
                 
                 edge_cases: at most 3 tiny manually written cases. No huge raw data.
                 - expected_output must be an empty string; the backend will compute it from the trusted oracle and cross-check small/edge cases with bruteforce_solution.
@@ -358,9 +435,9 @@ public class GeminiTestGenerationService {
                 - formatted_description, input_format, output_format, and constraints must not be English prose.
                 - If the original statement is English, translate those four fields to Vietnamese.
                 - Do not translate variable names, constants, sample input/output data, or source code.
-                - Ensure every comparison, exponent, index, and complexity expression remains display-safe plain text:
-                  <=, >=, <, >, 10^5, 2^31-1, a_i, O(n log n).
-                - Never output raw HTML, Markdown tables, or LaTeX-only syntax in user-facing fields.
+                - Ensure every comparison, exponent, and index in user-facing fields is valid Markdown + LaTeX:
+                  $x \\le y$, $10^5$, $2^{31}-1$, $a_i$, $O(n \\log n)$.
+                - Never output raw HTML or code fences in user-facing fields.
                 """.formatted(
                 problemText == null ? "" : problemText,
                 analysisJson == null ? "{}" : analysisJson,
@@ -379,10 +456,10 @@ public class GeminiTestGenerationService {
             JsonNode root = readJsonWithContext(cleanedText);
             AiResponseDTO dto = new AiResponseDTO();
             dto.setUnderstanding(root.path("understanding").asText(""));
-            dto.setFormattedDescription(root.path("formatted_description").asText(""));
-            dto.setInputFormat(root.path("input_format").asText(root.path("input").asText("")));
-            dto.setOutputFormat(root.path("output_format").asText(root.path("output").asText("")));
-            dto.setConstraints(root.path("constraints").asText(""));
+            dto.setFormattedDescription(normalizeStatementMarkdown(root.path("formatted_description").asText("")));
+            dto.setInputFormat(normalizeStatementMarkdown(root.path("input_format").asText(root.path("input").asText(""))));
+            dto.setOutputFormat(normalizeStatementMarkdown(root.path("output_format").asText(root.path("output").asText(""))));
+            dto.setConstraints(normalizeStatementMarkdown(root.path("constraints").asText("")));
             JsonNode inputSchemaNode = root.path("input_schema");
             if (!inputSchemaNode.isMissingNode() && !inputSchemaNode.isNull()) {
                 dto.setInputSchema(normalizeInputSchema(inputSchemaNode));
@@ -709,6 +786,49 @@ public class GeminiTestGenerationService {
         String normalized = text.replaceAll("\\s+", " ").trim();
         if (normalized.length() <= maxLength) return normalized;
         return normalized.substring(0, maxLength) + "...";
+    }
+
+    String normalizeStatementMarkdown(String text) {
+        if (text == null || text.isBlank()) return text == null ? "" : text;
+        if (text.contains("$")) return text;
+
+        return normalizePlainStatementSegment(text);
+    }
+
+    private String normalizePlainStatementSegment(String text) {
+        StringBuilder normalizedText = new StringBuilder();
+        String[] lines = text.split("(?<=\\n)", -1);
+        for (String line : lines) {
+            normalizedText.append(normalizePlainStatementLine(line));
+        }
+        return normalizedText.toString();
+    }
+
+    private String normalizePlainStatementLine(String line) {
+        String normalized = line;
+        normalized = normalized.replaceAll(
+                "(?m)(?<!\\$)(\\d+)\\s*<=\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*<=\\s*(10\\^\\d+|\\d+)(?!\\$)",
+                "\\$$1 \\\\le $2 \\\\le $3\\$");
+        normalized = normalized.replaceAll(
+                "(?m)(?<!\\$)(\\d+)\\s*>=\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*>=\\s*(10\\^\\d+|\\d+)(?!\\$)",
+                "\\$$1 \\\\ge $2 \\\\ge $3\\$");
+        normalized = normalized.replaceAll(
+                "(?m)(?<!\\$)(\\d+)\\s*<=\\s*([A-Za-z_][A-Za-z0-9_]*)(?!\\s*<=)(?!\\$)",
+                "\\$$1 \\\\le $2\\$");
+        normalized = normalized.replaceAll(
+                "(?m)(?<!\\$)([A-Za-z_][A-Za-z0-9_]*)\\s*<=\\s*(10\\^\\d+|\\d+)(?!\\$)",
+                "\\$$1 \\\\le $2\\$");
+        normalized = normalized.replaceAll(
+                "(?m)(?<!\\$)(\\d+)\\s*>=\\s*([A-Za-z_][A-Za-z0-9_]*)(?!\\s*>=)(?!\\$)",
+                "\\$$1 \\\\ge $2\\$");
+        normalized = normalized.replaceAll(
+                "(?m)(?<!\\$)([A-Za-z_][A-Za-z0-9_]*)\\s*>=\\s*(10\\^\\d+|\\d+)(?!\\$)",
+                "\\$$1 \\\\ge $2\\$");
+        if (!normalized.contains("$")) {
+            normalized = normalized.replaceAll("\\b([A-Za-z]+_[A-Za-z0-9]+)\\b", "\\$$1\\$");
+            normalized = normalized.replaceAll("\\b(10\\^\\d+)\\b", "\\$$1\\$");
+        }
+        return normalized;
     }
 
     private boolean isHardQuotaExceeded(String responseBody) {

@@ -122,6 +122,13 @@ public class AiIntegrationService {
                 ollamaGeneratorService.repairGenerator(generatorSpecJson, previousGenerator, validationError));
     }
 
+    public AiResponseDTO repairFormalSpec(String problemDescription, List<String> base64Images,
+                                          AiResponseDTO brokenDto, String validationError) {
+        String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
+        String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint);
+        return normalizeArtifacts(geminiTestGenerationService.repairFormalSpec(problemText, brokenDto, validationError));
+    }
+
     public void saveValidatedTestGeneration(String problemDescription, List<String> base64Images,
                                             int count, AiResponseDTO dto) {
         String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);

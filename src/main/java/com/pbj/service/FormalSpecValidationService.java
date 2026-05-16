@@ -86,6 +86,8 @@ public class FormalSpecValidationService {
 
         validateGraphTupleShape(errors, source, dto.getInputSchema());
         validatePhantomArrayProblem(errors, source, dto.getInputSchema());
+        validateSchemaIdentifierCoverage(errors, source, dto.getInputSchema());
+        validateCommandVocabulary(errors, source, generated);
 
         if (!errors.isEmpty()) {
             throw new IllegalStateException(
@@ -178,6 +180,34 @@ public class FormalSpecValidationService {
         }
     }
 
+    private void validateSchemaIdentifierCoverage(List<String> errors, String normalizedSource, JsonNode schema) {
+        Set<String> identifiers = schemaIdentifiers(schema);
+        if (identifiers.size() < 4) return;
+
+        List<String> unmatched = new ArrayList<>();
+        for (String identifier : identifiers) {
+            if (!containsToken(normalizedSource, identifier)) {
+                unmatched.add(identifier);
+            }
+        }
+
+        int matched = identifiers.size() - unmatched.size();
+        if (matched * 10 < identifiers.size() * 6) {
+            errors.add("input_schema identifiers are weakly grounded in the source statement"
+                    + " (matched " + matched + "/" + identifiers.size()
+                    + ", unmatched: " + String.join(", ", unmatched) + ").");
+        }
+    }
+
+    private void validateCommandVocabulary(List<String> errors, String normalizedSource, String normalizedGenerated) {
+        for (String command : List.of("update", "query")) {
+            if (containsToken(normalizedGenerated, command) && !containsToken(normalizedSource, command)) {
+                errors.add("generated specification mentions command '" + command
+                        + "' that is absent from the source statement.");
+            }
+        }
+    }
+
     private void validateScalarLine(List<String> errors, JsonNode line, int lineIndex, Set<String> definedScalars) {
         JsonNode fields = line.path("fields");
         if (!fields.isArray() || fields.isEmpty()) {
@@ -209,10 +239,16 @@ public class FormalSpecValidationService {
             JsonNode column = columns.get(c);
             String path = "input_schema.lines[" + lineIndex + "].columns[" + c + "]";
             JsonNode max = column.path("max");
-            if (max.isTextual()) {
+            if (isUnknown(max)) {
+                errors.add(path + ".max is unknown.");
+            } else if (max.isTextual()) {
                 validateLengthReference(errors, max, definedScalars, path + ".max");
             }
-            validateNumericBounds(errors, column, path);
+
+            JsonNode min = column.path("min");
+            if (isUnknown(min)) {
+                errors.add(path + ".min is unknown.");
+            }
         }
     }
 

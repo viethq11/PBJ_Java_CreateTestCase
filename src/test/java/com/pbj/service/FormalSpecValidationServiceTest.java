@@ -9,6 +9,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class FormalSpecValidationServiceTest {
 
@@ -52,6 +53,33 @@ class FormalSpecValidationServiceTest {
         assertThatThrownBy(() -> service.validateForGeneration(dto))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("undefined scalar 'M'");
+    }
+
+    @Test
+    void reportsUnknownTupleBoundsWithoutAlsoTreatingUnknownAsScalarReference() throws Exception {
+        AiResponseDTO dto = completeDto("""
+                {
+                  "multiple_test_cases": false,
+                  "lines": [
+                    {"kind": "scalars", "fields": [{"name": "N", "type": "int", "min": 1, "max": 100000}]},
+                    {
+                      "kind": "queries",
+                      "length": "N",
+                      "columns": [
+                        {"name": "x", "type": "int", "min": "unknown", "max": "unknown"}
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+        assertThatThrownBy(() -> service.validateForGeneration(dto))
+                .isInstanceOf(IllegalStateException.class)
+                .satisfies(ex -> {
+                    assertThat(ex.getMessage()).contains("input_schema.lines[1].columns[0].min is unknown.");
+                    assertThat(ex.getMessage()).contains("input_schema.lines[1].columns[0].max is unknown.");
+                    assertThat(ex.getMessage()).doesNotContain("references undefined scalar 'unknown'");
+                });
     }
 
     @Test
@@ -179,6 +207,48 @@ class FormalSpecValidationServiceTest {
                 """;
 
         assertThatCode(() -> service.validateAgainstSource(source, dto)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsCubeSummationArtifactsForCowGameSource() throws Exception {
+        AiResponseDTO dto = completeDto("""
+                {
+                  "multiple_test_cases": true,
+                  "lines": [
+                    {"kind": "scalars", "fields": [
+                      {"name": "T", "type": "int", "min": 1, "max": 100000}
+                    ]},
+                    {"kind": "scalars", "fields": [
+                      {"name": "N", "type": "int", "min": 1, "max": 1000},
+                      {"name": "M", "type": "int", "min": 1, "max": 1000}
+                    ]},
+                    {"kind": "queries", "length": "M", "columns": [
+                      {"name": "x", "type": "int", "min": 1, "max": "N"},
+                      {"name": "y", "type": "int", "min": 1, "max": "N"},
+                      {"name": "z", "type": "int", "min": 1, "max": "N"},
+                      {"name": "w", "type": "int", "min": 1, "max": 1000000000}
+                    ]}
+                  ]
+                }
+                """);
+        dto.setFormattedDescription("Dùng 3D Binary Indexed Tree để xử lý UPDATE và QUERY.");
+        dto.setInputFormat("Mỗi truy vấn là UPDATE hoặc QUERY.");
+        dto.setOutputFormat("In tổng cho mỗi QUERY.");
+        dto.getTestPlan().setProblemType("GENERIC_SCHEMA");
+        dto.getTestPlan().setIntendedSolution("3D Binary Indexed Tree.");
+
+        String source = """
+                Dễ quá trình chăn dắt hơn, Hieu và RR muốn di chuyển tất cả N con bò về phía bên trái.
+                Có T bộ test. Mỗi bộ test có N và dãy a_i phân biệt.
+                Trong mỗi lượt, người chơi di chuyển con bò ở vị trí ngoài cùng bên phải đến một chuồng trống bên trái.
+                Hãy xác định ai thắng nếu cả hai chơi tối ưu.
+                """;
+
+        assertThatThrownBy(() -> service.validateAgainstSource(source, dto))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("different problem")
+                .hasMessageContaining("command 'update'")
+                .hasMessageContaining("weakly grounded");
     }
 
     private AiResponseDTO completeDto(String schemaJson) throws Exception {

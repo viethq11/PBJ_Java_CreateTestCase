@@ -279,7 +279,15 @@ public class ProblemService {
                 description, base64Images, GENERATOR_RUNS.length, bypassCache);
         ensureLocalArtifacts(dto);
         dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
-        formalSpecValidationService.validateForGeneration(dto);
+        try {
+            formalSpecValidationService.validateForGeneration(dto);
+        } catch (IllegalStateException ex) {
+            System.err.println("WARN: Formal spec invalid, trying repair: " + ex.getMessage());
+            dto = aiIntegrationService.repairFormalSpec(description, base64Images, dto, ex.getMessage());
+            ensureLocalArtifacts(dto);
+            dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
+            formalSpecValidationService.validateForGeneration(dto);
+        }
         formalSpecValidationService.validateAgainstSource(description, dto);
         return dto;
     }
@@ -298,13 +306,18 @@ public class ProblemService {
         String goldenCode = resolveGoldenSolution(problem, dto);
         if (goldenCode == null || goldenCode.isBlank()) {
             if (!requireGoldenCode) {
-                saveEdgeCases(
+                int saved = saveEdgeCases(
                         problem,
                         dto.getEdgeCases(),
                         goldenCode,
                         buildReferenceOracles(problem, dto),
                         new RejectionStats(),
                         new GenerationQualitySummary());
+                if (saved == 0) {
+                    throw new IllegalStateException(
+                            "Failed to generate any valid testcases. No trusted AC reference is available, "
+                                    + "and no valid small edge testcase could be saved from the brute-force oracle.");
+                }
                 aiIntegrationService.saveValidatedTestGeneration(description, base64Images, GENERATOR_RUNS.length, dto);
                 return;
             }
@@ -681,9 +694,19 @@ public class ProblemService {
                         expectedOutput,
                         "manual edge testcase #" + (saved + 1),
                         quality);
+            } else if (oracles != null && oracles.hasBruteForce()) {
+                CodeExecutionService.GoldenResult bruteForceResult = codeExecutionService.runGoldenSolutionDetailed(
+                        oracles.bruteForceCode(),
+                        oracles.bruteForceLanguage(),
+                        input,
+                        oracles.bruteForceTimeLimit());
+                expectedOutput = bruteForceResult.success ? bruteForceResult.output : null;
+                if (expectedOutput == null && rejectionStats != null) {
+                    rejectionStats.recordGoldenFailure(bruteForceResult.message);
+                }
             } else {
                 if (rejectionStats != null) {
-                    rejectionStats.recordGoldenFailure("No trusted golden solution available for manual edge testcase.");
+                    rejectionStats.recordGoldenFailure("No trusted oracle available for manual edge testcase.");
                 }
                 continue;
             }

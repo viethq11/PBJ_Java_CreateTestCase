@@ -22,6 +22,11 @@ class GeminiTestGenerationServiceTest {
         assertThat(prompt).contains("golden_solution must always be an empty string.");
         assertThat(prompt).contains("bruteforce_solution is mandatory whenever small/exhaustive or boundary verification is feasible.");
         assertThat(prompt).contains("\"golden_solution\": \"\"");
+        assertThat(prompt).contains("Do NOT write \"unknown\" in input_schema.min, input_schema.max, length, rows, cols, columns[].min, or columns[].max.");
+        assertThat(prompt).contains("The constraints field must not contain the words unknown, unspecified, or not specified.");
+        assertThat(prompt).contains("All problem statement fields must be written in Markdown.");
+        assertThat(prompt).contains("Write ranges as math such as $1 \\le N \\le 10^6$.");
+        assertThat(prompt).contains("Do NOT insert hard line breaks inside a normal paragraph");
     }
 
     @Test
@@ -98,5 +103,21 @@ class GeminiTestGenerationServiceTest {
         assertThat(normalizedLoopLine.path("length").asText()).isEqualTo("N");
         assertThat(normalizedLoopLine.path("columns")).hasSize(2);
         assertThat(normalizedLoopLine.path("columns").get(0).path("name").asText()).isEqualTo("x");
+    }
+
+    @Test
+    void normalizesLegacyPlainTextMathIntoMarkdownLatex() {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+
+        String normalized = service.normalizeStatementMarkdown("""
+                - 1 <= N <= 10^6
+                - 1 <= a_i <= 10^9
+                - Gia tri rieng le a_j va 10^5
+                """);
+
+        assertThat(normalized).contains("$1 \\le N \\le 10^6$");
+        assertThat(normalized).contains("$1 \\le a_i \\le 10^9$");
+        assertThat(normalized).contains("$a_j$");
+        assertThat(normalized).contains("$10^5$");
     }
 }

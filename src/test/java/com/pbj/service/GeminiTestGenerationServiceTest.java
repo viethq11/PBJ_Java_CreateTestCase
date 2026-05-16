@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GeminiTestGenerationServiceTest {
 
     @Test
-    void generationPromptDisablesGoldenSolutionAndRequiresBruteforceArtifacts() throws Exception {
+    void generationPromptRequiresReferenceArtifactsAndDisallowsRawCases() throws Exception {
         GeminiTestGenerationService service = new GeminiTestGenerationService();
         Method method = GeminiTestGenerationService.class.getDeclaredMethod(
                 "buildGenerationPrompt", String.class, String.class, int.class);
@@ -19,9 +19,11 @@ class GeminiTestGenerationServiceTest {
 
         String prompt = (String) method.invoke(service, "problem", "{}", 10);
 
-        assertThat(prompt).contains("golden_solution must always be an empty string.");
+        assertThat(prompt).contains("golden_solution must be a complete compilable C++17 reference program matching input_schema exactly.");
         assertThat(prompt).contains("bruteforce_solution is mandatory whenever small/exhaustive or boundary verification is feasible.");
-        assertThat(prompt).contains("\"golden_solution\": \"\"");
+        assertThat(prompt).contains("\"golden_solution\": \"Complete C++17 reference solution source code\"");
+        assertThat(prompt).contains("Do not output raw edge_cases or manually compute/invent any expected outputs.");
+        assertThat(prompt).contains("\"edge_cases\": []");
         assertThat(prompt).contains("Do NOT write \"unknown\" in input_schema.min, input_schema.max, length, rows, cols, columns[].min, or columns[].max.");
         assertThat(prompt).contains("The constraints field must not contain the words unknown, unspecified, or not specified.");
         assertThat(prompt).contains("All problem statement fields must be written in Markdown.");

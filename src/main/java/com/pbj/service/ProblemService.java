@@ -57,34 +57,24 @@ public class ProblemService {
     private static final String[][] GENERATOR_RUNS = {
         {"edge_boundary", "1"},
         {"edge_boundary", "2"},
-        {"edge_boundary", "3"},
+        {"random_small", "3"},
         {"random_small", "4"},
         {"random_small", "5"},
         {"random_small", "6"},
-        {"random_small", "7"},
-        {"random_small", "8"},
-        {"anti_greedy_small", "9"},
-        {"anti_greedy_small", "10"},
-        {"tie_breaking", "11"},
-        {"tie_breaking", "12"},
+        {"edge_boundary", "7"},
+        {"edge_boundary", "8"},
+        {"edge_boundary", "9"},
+        {"edge_boundary", "10"},
+        {"medium", "11"},
+        {"medium", "12"},
         {"medium", "13"},
         {"medium", "14"},
-        {"medium", "15"},
-        {"medium", "16"},
-        {"random_large", "17"},
-        {"random_large", "18"},
-        {"random_large", "19"},
-        {"adversarial_structure", "20"},
-        {"adversarial_structure", "21"},
-        {"adversarial_structure", "22"},
-        {"overflow_int32", "23"},
-        {"overflow_int32", "24"},
-        {"overflow_int64_if_relevant", "25"},
-        {"overflow_int64_if_relevant", "26"},
-        {"stress_performance", "27"},
-        {"stress_performance", "28"},
-        {"stress_performance", "29"},
-        {"stress_performance", "30"},
+        {"random_large", "15"},
+        {"random_large", "16"},
+        {"stress_performance", "17"},
+        {"stress_performance", "18"},
+        {"anti_greedy_small", "19"},
+        {"tie_breaking", "20"},
     };
 
     // ======================================================================
@@ -378,10 +368,7 @@ public class ProblemService {
         GenerationQualitySummary quality = new GenerationQualitySummary();
         quality.hasBruteForceArtifact = dto.getBruteForceSolution() != null && !dto.getBruteForceSolution().isBlank();
 
-        // 1. Manually crafted edge cases first
-        savedCount.addAndGet(saveEdgeCases(problem, dto.getEdgeCases(), goldenCode, oracles, rejectionStats, quality));
-
-        // 2. Generator-based cases
+        // Backend-owned generator cases only. AI does not provide raw testcase payloads.
         if (generatorCode != null && !generatorCode.isBlank()) {
             int tcSeq = savedCount.get() + 1;
             for (String[] run : GENERATOR_RUNS) {
@@ -443,24 +430,15 @@ public class ProblemService {
             }
         }
 
-        int adversarialCount = saveAdversarialCases(
-                problem, dto, goldenCode, fingerprints, savedCount.get() + 1, quality);
-        savedCount.addAndGet(adversarialCount);
-
-        int minedCount = saveProbeKillerCases(
-                problem, dto, goldenCode, oracles, generatorCode, generatorLanguage,
-                fingerprints, savedCount.get() + 1, quality);
-        savedCount.addAndGet(minedCount);
-
         if (generatorCode != null && !generatorCode.isBlank()
-                && generatedCount.get() + adversarialCount + minedCount < 8) {
-            if (generatedCount.get() + adversarialCount + minedCount == 0 && rejectionStats.goldenFailed > 0) {
+                && generatedCount.get() < 8) {
+            if (generatedCount.get() == 0 && rejectionStats.goldenFailed > 0) {
                 evictAcceptedCodeCache(problem);
             }
             throw new GeneratedTestcaseArtifactException(
                     "Generated testcase artifact is invalid: only "
-                    + (generatedCount.get() + adversarialCount + minedCount)
-                    + " generator/adversarial cases were accepted, "
+                    + generatedCount.get()
+                    + " backend-scheduled generator cases were accepted, "
                     + rejectionStats.totalRejected() + " were rejected or timed out. "
                     + rejectionStats.summary() + " "
                     + (rejectionStats.likelyGoldenReferenceFailure()

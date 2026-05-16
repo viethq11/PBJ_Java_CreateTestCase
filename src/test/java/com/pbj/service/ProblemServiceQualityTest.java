@@ -138,10 +138,9 @@ class ProblemServiceQualityTest {
                 "edge_boundary",
                 "random_small",
                 "random_large",
-                "overflow_int64_if_relevant",
-                "adversarial_structure",
                 "stress_performance"
         );
+        assertThat(profiles).hasSize(7);
     }
 
     @Test

@@ -114,7 +114,7 @@ public class GeminiTestGenerationService {
                       node indices: 1..N
                       binary flags/types: 0..1
                     - Put uncertainty into validator_rules or assumptions, not into input_schema.
-                    - golden_solution must remain an empty string.
+                    - golden_solution must be a complete compilable C++ reference solution for the original problem.
 
                     Original problem:
                     %s
@@ -172,18 +172,20 @@ public class GeminiTestGenerationService {
 
                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 ABSOLUTE RULE #1 — NEVER GENERATE HUGE RAW TESTCASES
-                NEVER output large arrays, N=100000 raw lines, or manually computed expected outputs.
+                NEVER output raw testcase inputs, raw testcase outputs, large arrays, N=100000 raw lines,
+                or manually computed expected outputs.
 
                 ABSOLUTE RULE #2 — TESTCASE ARTIFACTS ONLY
                 Return ONLY normalized formal specification and testcase-generation artifacts.
                 Do NOT generate standalone user-facing AC submissions.
                 The only executable artifacts you may generate are:
                 - generator_code
+                - golden_solution
                 - validator_code
                 - bruteforce_solution
                 - wrong_solutions[].code
-                golden_solution must always be an empty string.
-                Do not manually compute or invent expected outputs for edge_cases.
+                golden_solution must be a complete compilable C++17 reference program matching input_schema exactly.
+                Do not output raw edge_cases or manually compute/invent any expected outputs.
                 The bruteforce_solution must be a complete compilable program for tiny/small cases only,
                 matching input_schema exactly and producing authoritative output for small/edge verification.
                 wrong_solutions[].code must be plausible incorrect or slow programs that the generated tests should kill.
@@ -205,7 +207,7 @@ public class GeminiTestGenerationService {
                 Inside string values, represent newlines using literal \\n.
                 Inside string values, escape all double-quotes as \\" and all backslashes as \\\\.
                 - Do not include *_b64 fields.
-                - golden_solution must be an empty string.
+                - golden_solution must be raw compilable C++17 source code only.
                 - Every code field must be raw source code only, with no markdown fences or explanations.
 
                 ABSOLUTE RULE #5 — VIETNAMESE USER-FACING STATEMENT
@@ -360,7 +362,7 @@ public class GeminiTestGenerationService {
                   "total_testcases": %d,
                   "generator_language": "cpp",
                   "generator_code": "Complete generator source code",
-                  "golden_solution": "",
+                  "golden_solution": "Complete C++17 reference solution source code",
                   "bruteforce_solution": "Complete brute force source code for tiny/small cases",
                   "bruteforce_language": "cpp",
                   "validator_rules": ["rule 1", "rule 2"],
@@ -370,9 +372,7 @@ public class GeminiTestGenerationService {
                     "edge_cases": true,
                     "stress_cases": true
                   },
-                  "edge_cases": [
-                    {"input": "small input", "expected_output": "", "is_sample": true}
-                  ]
+                  "edge_cases": []
                 }
 
                 test_plan requirements:
@@ -402,8 +402,8 @@ public class GeminiTestGenerationService {
                 - If the statement is missing required constraint facts, infer the safest competitive-programming defaults above
                   and record uncertainty in validator_rules or assumptions instead of input_schema.
                 
-                edge_cases: at most 3 tiny manually written cases. No huge raw data.
-                - expected_output must be an empty string; the backend will compute it from the trusted oracle and cross-check small/edge cases with bruteforce_solution.
+                edge_cases:
+                - Always return an empty array. The backend owns all testcase inputs and expected outputs.
                 checker_code: empty string for unique-output problems.
                 wrong_solutions requirements:
                 - Provide at least 3 plausible wrong-solution metadata entries when feasible: overflow, greedy, boundary/off-by-one.
@@ -417,8 +417,9 @@ public class GeminiTestGenerationService {
                 executable artifact requirements:
                 - generator_code may be empty only if you genuinely cannot derive a safe generator from the statement.
                 - validator_code may be empty only if input_schema is sufficient for the backend to rebuild it exactly.
+                - golden_solution is mandatory and must solve the full constraints correctly.
                 - bruteforce_solution is mandatory whenever small/exhaustive or boundary verification is feasible.
-                - Never output golden_solution code.
+                - Never output raw testcase inputs or expected outputs.
                 test_profiles requirements:
                 - Use these structured profile names when possible:
                   SAMPLE, SMALL_EXHAUSTIVE, BOUNDARY_MIN, BOUNDARY_MAX,

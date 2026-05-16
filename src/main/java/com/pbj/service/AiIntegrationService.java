@@ -23,8 +23,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class AiIntegrationService {
     private static final String ANALYSIS_CACHE_PREFIX = "ollama_analysis_v6_grounded_";
-    private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v8_grounded_profiles_";
-    private static final String PIPELINE_CACHE_PREFIX = "ollama_gemini_ollama_generator_pipeline_v10_grounded_profiles_";
+    private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v9_artifact_only_";
+    private static final String PIPELINE_CACHE_PREFIX = "ollama_gemini_ollama_generator_pipeline_v11_artifact_only_";
 
     private final AiCacheRepository aiCacheRepository;
     private final AiJobQueueService aiJobQueueService;
@@ -77,7 +77,14 @@ public class AiIntegrationService {
             dto = normalizeArtifacts(geminiTestGenerationService.generateTestArtifacts(problemText, analysisJson, count));
             saveCache(geminiKey, dto, "gemini-artifacts");
         }
-        formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
+        try {
+            formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
+        } catch (IllegalStateException ex) {
+            System.err.println("WARN: Formal spec grounding invalid, trying repair: " + ex.getMessage());
+            dto = normalizeArtifacts(geminiTestGenerationService.repairFormalSpec(problemText, dto, ex.getMessage()));
+            formalSpecValidationService.validateAgainstSource(normalizedProblemText, dto);
+            saveCache(geminiKey, dto, "gemini-artifacts-repaired");
+        }
 
         System.out.println("INFO: [AI Pipeline] Step 3 - System testcase generator...");
         String generatorCode = systemTestcaseGeneratorService.buildGenerator(dto, normalizedProblemText);
@@ -90,6 +97,9 @@ public class AiIntegrationService {
     private AiResponseDTO normalizeArtifacts(AiResponseDTO dto) {
         if (dto != null && dto.getInputSchema() != null) {
             dto.setInputSchema(geminiTestGenerationService.normalizeInputSchema(dto.getInputSchema()));
+        }
+        if (dto != null) {
+            dto.setEdgeCases(List.of());
         }
         return dto;
     }

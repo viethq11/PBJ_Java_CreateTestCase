@@ -3,6 +3,7 @@ package com.pbj.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbj.dto.AiResponseDTO;
 import com.pbj.dto.AiProblemAnalysisDTO;
+import com.pbj.dto.SemanticSpecDTO;
 import com.pbj.entity.AiCache;
 import com.pbj.repository.AiCacheRepository;
 import org.junit.jupiter.api.Test;
@@ -43,7 +44,12 @@ class AiIntegrationServiceTest {
             }
 
             @Override
-            public AiResponseDTO generateTestArtifacts(String problemText, AiProblemAnalysisDTO analysis, int count) {
+            public SemanticSpecDTO extractSemanticSpec(String problemText, AiProblemAnalysisDTO analysis) {
+                return semanticSpec();
+            }
+
+            @Override
+            public AiResponseDTO generateTestArtifacts(AiProblemAnalysisDTO analysis, SemanticSpecDTO semanticSpec, int count) {
                 generationCalls[0]++;
                 return generatedDto;
             }
@@ -85,6 +91,7 @@ class AiIntegrationServiceTest {
                 new FormalSpecValidationService(),
                 testcaseGeneratorService,
                 verificationService,
+                new SemanticSpecValidationService(),
                 new ObjectMapper()
         );
 
@@ -137,6 +144,7 @@ class AiIntegrationServiceTest {
                 new FormalSpecValidationService(),
                 null,
                 mock(VerificationService.class),
+                new SemanticSpecValidationService(),
                 new ObjectMapper()
         );
 
@@ -191,6 +199,17 @@ class AiIntegrationServiceTest {
         dto.setValidatorCode("");
         dto.setTestPlan(testPlan("GRAPH_ALTERNATING_EDGE_SHORTEST_PATH", "Dijkstra tren trang thai."));
         return dto;
+    }
+
+    private static SemanticSpecDTO semanticSpec() {
+        SemanticSpecDTO spec = new SemanticSpecDTO();
+        spec.setQueryVariables(List.of("u", "v"));
+        spec.setIgnoredVariables(List.of());
+        spec.setPaths(List.of());
+        spec.setConditions(List.of("shortest path from 1 to N with alternating type"));
+        spec.setGraphType("graph");
+        spec.setOutputSemantics("minimum distance");
+        return spec;
     }
 
     private static AiResponseDTO cubeSummationDto() {

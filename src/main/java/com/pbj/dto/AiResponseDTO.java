@@ -94,6 +94,9 @@ public class AiResponseDTO {
     @JsonProperty("verification_report")
     private JsonNode verificationReport;
 
+    @JsonProperty("semantic_spec")
+    private SemanticSpecDTO semanticSpec;
+
     @Data
     public static class TestPlan {
         @JsonProperty("problem_type")

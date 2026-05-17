@@ -3,6 +3,7 @@ package com.pbj.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbj.dto.AiResponseDTO;
 import com.pbj.dto.AiProblemAnalysisDTO;
+import com.pbj.dto.SemanticSpecDTO;
 import com.pbj.entity.AiCache;
 import com.pbj.repository.AiCacheRepository;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +26,7 @@ import java.util.Optional;
 public class AiIntegrationService {
     private static final String ANALYSIS_CACHE_PREFIX = "ollama_analysis_v6_grounded_";
     private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v9_artifact_only_";
-    private static final String PIPELINE_CACHE_PREFIX = "ollama_gemini_ollama_generator_pipeline_v11_artifact_only_";
+    private static final String PIPELINE_CACHE_PREFIX = "semantic_ir_pipeline_v12_";
 
     private final AiCacheRepository aiCacheRepository;
     private final AiJobQueueService aiJobQueueService;
@@ -35,6 +36,7 @@ public class AiIntegrationService {
     private final FormalSpecValidationService formalSpecValidationService;
     private final SystemTestcaseGeneratorService systemTestcaseGeneratorService;
     private final VerificationService verificationService;
+    private final SemanticSpecValidationService semanticSpecValidationService;
     private final ObjectMapper objectMapper;
 
     public AiResponseDTO generateTestCases(String problemDescription, List<String> base64Images, int count) {
@@ -67,15 +69,35 @@ public class AiIntegrationService {
 
         geminiTestGenerationService.verifyApiKeysBeforePipeline();
         String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint);
+        System.out.println("=== OCR PROBLEM TEXT ===");
+        System.out.println(problemText);
+        System.out.println("========================");
         
         // Step 1: Problem Analysis (Call 1)
-        System.out.println("INFO: [AI Pipeline] Step 1 - Gemini problem analysis...");
+        System.out.println("INFO: [AI Pipeline] Phase A1 - Gemini problem classification...");
         AiProblemAnalysisDTO analysis = geminiTestGenerationService.analyzeProblem(problemText);
+
+        System.out.println("INFO: [AI Pipeline] Phase A2 - Gemini semantic IR extraction...");
+        SemanticSpecDTO semanticSpec = geminiTestGenerationService.extractSemanticSpec(problemText, analysis);
+        semanticSpecValidationService.validate(semanticSpec);
+        analysis.setSemanticSpec(semanticSpec);
+        if (analysis.getInputModel() == null && semanticSpec.getInputModel() != null) {
+            analysis.setInputModel(semanticSpec.getInputModel());
+        }
         
+        System.out.println("=== FROZEN SEMANTIC SPEC ===");
+        try {
+            System.out.println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(semanticSpec));
+        } catch (Exception e) {
+            System.out.println(semanticSpec);
+        }
+        System.out.println("============================");
+
         // Step 2: Generation (Call 2)
-        System.out.println("INFO: [AI Pipeline] Step 2 - Gemini artifact generation...");
-        AiResponseDTO dto = normalizeArtifacts(geminiTestGenerationService.generateTestArtifacts(problemText, analysis, count));
-        installSystemGeneratorIfNeeded(dto, problemText);
+        System.out.println("INFO: [AI Pipeline] Phase B - artifact generation from frozen semantic IR...");
+        AiResponseDTO dto = normalizeArtifacts(geminiTestGenerationService.generateTestArtifacts(analysis, semanticSpec, count));
+        dto.setSemanticSpec(semanticSpec);
+        installSystemGeneratorIfNeeded(dto, semanticGeneratorContext(analysis, semanticSpec));
 
         // Step 3: Backend Cross-Check (Brute vs Golden)
         System.out.println("INFO: [AI Pipeline] Step 3 - Backend verification (Brute vs Golden)...");
@@ -88,7 +110,8 @@ public class AiIntegrationService {
             if (isMismatchReport(report)) {
                  System.out.println("INFO: [AI Pipeline] Verification mismatch - attempting repair...");
                  dto = normalizeArtifacts(geminiTestGenerationService.repairFormalSpec(problemText, dto, "Brute vs Golden mismatch: " + report.message));
-                 installSystemGeneratorIfNeeded(dto, problemText);
+                 dto.setSemanticSpec(semanticSpec);
+                 installSystemGeneratorIfNeeded(dto, semanticGeneratorContext(analysis, semanticSpec));
                  report = verificationService.verifyBruteVsGolden(dto, 5);
                  dto.setVerificationReport(verificationService.reportToJson(report));
             }
@@ -121,6 +144,17 @@ public class AiIntegrationService {
         if (generated != null && !generated.isBlank()) {
             dto.setGeneratorCode(generated);
             dto.setGeneratorLanguage("cpp");
+        }
+    }
+
+    private String semanticGeneratorContext(AiProblemAnalysisDTO analysis, SemanticSpecDTO semanticSpec) {
+        try {
+            Map<String, Object> context = new LinkedHashMap<>();
+            context.put("semantic_spec", semanticSpec);
+            context.put("analysis", analysis);
+            return objectMapper.writeValueAsString(context);
+        } catch (Exception e) {
+            return semanticSpec == null ? "" : semanticSpec.toString();
         }
     }
 

@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.pbj.dto.AiResponseDTO;
 import com.pbj.dto.AiProblemAnalysisDTO;
+import com.pbj.dto.SemanticSpecDTO;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -126,8 +127,25 @@ public class GeminiTestGenerationService {
         }
     }
 
-    public AiResponseDTO generateTestArtifacts(String problemText, AiProblemAnalysisDTO analysis, int count) {
-        String prompt = buildGenerationPromptV2(problemText, analysis, count);
+    public SemanticSpecDTO extractSemanticSpec(String problemText, AiProblemAnalysisDTO analysis) {
+        String prompt = buildSemanticSpecPrompt(problemText, analysis);
+        Map<String, Object> requestBody = Map.of(
+                "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
+                "generationConfig", Map.of(
+                        "responseMimeType", "application/json",
+                        "temperature", 0
+                )
+        );
+        String responseText = executeGeminiRequest(requestBody, "Gemini (Semantic Spec Extract)");
+        try {
+            return objectMapper.readValue(stripMarkdownFences(responseText), SemanticSpecDTO.class);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to parse Gemini semantic spec response: " + e.getMessage(), e);
+        }
+    }
+
+    public AiResponseDTO generateTestArtifacts(AiProblemAnalysisDTO analysis, SemanticSpecDTO semanticSpec, int count) {
+        String prompt = buildGenerationPromptV2(analysis, semanticSpec, count);
         Map<String, Object> requestBody = Map.of(
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
                 "generationConfig", Map.of(
@@ -299,6 +317,12 @@ public class GeminiTestGenerationService {
                 ABSOLUTE RULE #5 — VIETNAMESE USER-FACING STATEMENT
                 The user-facing problem statement fields MUST be written in Vietnamese:
                 - formatted_description: Vietnamese only, preserving formulas, variable names, and math notation.
+                - formatted_description must preserve the exact original logic.
+                - Do not rewrite the condition semantically.
+                - Do not change which variables belong to which path.
+                - The query has five integers u, w, x, y, z.
+                - The pair condition depends only on paths w->x and y->z.
+                - u is accepted but ignored in the counting condition.
                 - input_format: Vietnamese only, clearly explaining every input line/token.
                 - output_format: Vietnamese only, clearly explaining what to print.
                 - constraints: Vietnamese only, formatted as a compact readable list.
@@ -692,6 +716,9 @@ public class GeminiTestGenerationService {
 
             if (root.has("input_model")) {
                 dto.setInputModel(root.path("input_model"));
+            }
+            if (root.has("semantic_spec")) {
+                dto.setSemanticSpec(objectMapper.treeToValue(root.path("semantic_spec"), SemanticSpecDTO.class));
             }
 
             dto.setBruteForceLanguage(root.path("bruteforce_language").asText("cpp"));
@@ -1174,7 +1201,7 @@ public class GeminiTestGenerationService {
                 """.formatted(problemText);
     }
 
-    private String buildGenerationPromptV2(String problemText, AiProblemAnalysisDTO analysis, int count) {
+    private String buildSemanticSpecPrompt(String problemText, AiProblemAnalysisDTO analysis) {
         String analysisJson;
         try {
             analysisJson = objectMapper.writeValueAsString(analysis);
@@ -1183,13 +1210,79 @@ public class GeminiTestGenerationService {
         }
 
         return """
-                You are a professional competitive programming testcase engineer.
-                Based on the problem statement and the preliminary analysis, generate the necessary artifacts.
-                
-                Problem Statement:
+                You are Phase A of an AI-assisted compiler for competitive-programming statements.
+                Extract ONLY the normalized formal semantic IR. Do not generate code, testcases, validators, explanations, or a rewritten statement.
+
+                The IR is the contract for later deterministic generator/code phases. Preserve variable relations exactly.
+
+                Problem statement:
                 %s
+
+                Preliminary classification:
+                %s
+
+                Return ONLY valid JSON matching this shape:
+                {
+                  "query_variables": ["u", "w", "x", "y", "z"],
+                  "ignored_variables": ["u"],
+                  "paths": [["w", "x"], ["y", "z"]],
+                  "conditions": [
+                    "i in path(w,x)",
+                    "j in path(y,z)",
+                    "c[i] == c[j]",
+                    "i != j"
+                  ],
+                  "graph_type": "tree",
+                  "value_domain": {
+                    "c_i": "integer"
+                  },
+                  "input_model": {
+                    "type": "single_case",
+                    "sections": []
+                  },
+                  "constraints": {
+                    "n": "from statement if present",
+                    "q": "from statement if present"
+                  },
+                  "counted_objects": ["ordered pair (i,j)"],
+                  "output_semantics": "one answer per query"
+                }
+
+                Rules:
+                - If the statement has no queries, use [] for query_variables, ignored_variables, and paths.
+                - Every variable in ignored_variables must also appear in query_variables.
+                - Every path endpoint must be a query variable unless the path is over fixed/global endpoints.
+                - Do not swap path endpoints between conditions.
+                - Do not infer a variable is used in a condition only because it appears in the input tuple.
+                - For a query with five integers u, w, x, y, z whose pair condition depends on paths w->x and y->z,
+                  output ignored_variables ["u"] and paths [["w","x"],["y","z"]].
+                """.formatted(problemText == null ? "" : problemText, analysisJson);
+    }
+
+    private String buildGenerationPromptV2(AiProblemAnalysisDTO analysis, SemanticSpecDTO semanticSpec, int count) {
+        String analysisJson;
+        try {
+            analysisJson = objectMapper.writeValueAsString(analysis);
+        } catch (JsonProcessingException e) {
+            analysisJson = "{}";
+        }
+        String semanticJson;
+        try {
+            semanticJson = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(semanticSpec);
+        } catch (JsonProcessingException e) {
+            semanticJson = "{}";
+        }
+
+        return """
+                You are Phase B of an AI-assisted compiler for competitive-programming testcase generation.
+                Generate artifacts ONLY from the frozen normalized formal semantic IR.
+                The raw story/problem statement is intentionally not provided in this phase.
+                Do not invent, rewrite, swap, or reinterpret semantic relations.
                 
-                Preliminary Analysis:
+                Frozen Semantic IR:
+                %s
+
+                Preliminary classification and input model hints:
                 %s
                 
                 ABSOLUTE RULE #1: CODE FIELDS MUST BE BASE64
@@ -1208,10 +1301,16 @@ public class GeminiTestGenerationService {
                 - bruteforce_solution: Correct but simple/slow, intended for small/tiny constraints.
                 
                 ABSOLUTE RULE #3: INPUT MODEL
-                Use the provided input_model from the analysis. Ensure the generator respects it perfectly.
+                Use semantic_spec.input_model first, then the provided analysis input_model. Ensure the generator respects it perfectly.
                 
                 ABSOLUTE RULE #4: VIETNAMESE USER-FACING STATEMENT
                 The formatted_description, input_format, output_format, constraints must be in Vietnamese with LaTeX math ($...$).
+                formatted_description must preserve the exact logic in the Frozen Semantic IR.
+                Do not rewrite the condition semantically.
+                Do not change which variables belong to which path.
+                If Frozen Semantic IR says query_variables are u,w,x,y,z and ignored_variables contains u,
+                then u is accepted in input but ignored in the counting condition.
+                Do not insert hard line breaks inside normal paragraphs; use blank lines only between paragraphs.
                 
                 Return EXACTLY this JSON structure:
                 {
@@ -1219,6 +1318,7 @@ public class GeminiTestGenerationService {
                   "input_format": "...",
                   "output_format": "...",
                   "constraints": "...",
+                  "semantic_spec": { ...same frozen semantic IR... },
                   "input_model": { ... },
                   "generator_code_b64": "Base64 encoded C++ generator",
                   "golden_solution_b64": "Base64 encoded C++17 optimized solution",
@@ -1235,6 +1335,6 @@ public class GeminiTestGenerationService {
                   ],
                   "total_testcases": %d
                 }
-                """.formatted(problemText, analysisJson, count);
+                """.formatted(semanticJson, analysisJson, count);
     }
 }

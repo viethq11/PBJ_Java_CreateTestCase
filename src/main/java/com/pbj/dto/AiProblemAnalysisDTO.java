@@ -30,4 +30,7 @@ public class AiProblemAnalysisDTO {
 
     @JsonProperty("analysis_summary")
     private String analysisSummary;
+
+    @JsonProperty("semantic_spec")
+    private SemanticSpecDTO semanticSpec;
 }

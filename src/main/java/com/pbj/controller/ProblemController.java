@@ -78,11 +78,13 @@ public class ProblemController {
     public ResponseEntity<Map<String, String>> generateProblem(
             @RequestParam("title") String title,
             @RequestParam(value = "description", required = false) String description,
-            @RequestParam(value = "images", required = false) MultipartFile[] images) {
+            @RequestParam(value = "images", required = false) MultipartFile[] images,
+            @RequestParam(value = "bypassCache", defaultValue = "false") boolean bypassCache) {
         try {
             String jobId = problemService.submitGenerateProblem(
                     title, description,
-                    images != null ? Arrays.asList(images) : null);
+                    images != null ? Arrays.asList(images) : null,
+                    bypassCache);
             return ResponseEntity.accepted().body(Map.of("jobId", jobId));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

@@ -2,6 +2,7 @@ package com.pbj.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbj.dto.AiResponseDTO;
+import com.pbj.dto.SemanticSpecDTO;
 import com.pbj.entity.Problem;
 import com.pbj.entity.TestCase;
 import com.pbj.repository.ProblemRepository;
@@ -139,16 +140,24 @@ public class ProblemService {
      * and returns the job ID so the frontend can poll /api/job/{id}.
      */
     public String submitGenerateProblem(String title, String description, List<MultipartFile> images) {
+        return submitGenerateProblem(title, description, images, false);
+    }
+
+    public String submitGenerateProblem(String title, String description, List<MultipartFile> images, boolean bypassCache) {
         List<String> base64Images = encodeImages(images);
         String jobId = jobQueueService.createJob("GENERATE");
-        judgeTaskExecutor.execute(() -> generateProblemAsync(jobId, title, description, base64Images));
+        judgeTaskExecutor.execute(() -> generateProblemAsync(jobId, title, description, base64Images, bypassCache));
         return jobId;
     }
 
     public void generateProblemAsync(String jobId, String title, String description, List<String> base64Images) {
+        generateProblemAsync(jobId, title, description, base64Images, false);
+    }
+
+    public void generateProblemAsync(String jobId, String title, String description, List<String> base64Images, boolean bypassCache) {
         jobQueueService.updateState(jobId, JobQueueService.JobState.RUNNING);
         try {
-            Problem p = generateAndSaveProblemFromBase64(title, description, base64Images);
+            Problem p = generateAndSaveProblemFromBase64(title, description, base64Images, bypassCache);
             jobQueueService.completeJob(jobId, p.getId());
         } catch (Exception e) {
             jobQueueService.failJob(jobId, e.getMessage());
@@ -213,12 +222,17 @@ public class ProblemService {
 
     @Transactional
     public Problem generateAndSaveProblemFromBase64(String title, String description, List<String> base64Images) {
+        return generateAndSaveProblemFromBase64(title, description, base64Images, false);
+    }
+
+    @Transactional
+    public Problem generateAndSaveProblemFromBase64(String title, String description, List<String> base64Images, boolean bypassCache) {
         Problem p = null;
 
         try {
-            AiResponseDTO dto = prepareGenerationDto(description, base64Images, false);
+            AiResponseDTO dto = prepareGenerationDto(description, base64Images, bypassCache);
             p = saveProblemMetadata(null, title, description, dto);
-            completeTestGeneration(p, dto, description, base64Images, false);
+            completeTestGeneration(p, dto, description, base64Images, bypassCache);
             return p;
         } catch (GeneratedTestcaseArtifactException e) {
             aiIntegrationService.evictTestGenerationCache(description, base64Images, GENERATOR_RUNS.length);
@@ -343,14 +357,11 @@ public class ProblemService {
     private AiResponseDTO localConnectopolisDto() {
         AiResponseDTO dto = new AiResponseDTO();
         dto.setFormattedDescription("""
-                Connectopolis has $n$ landmarks connected by $n-1$ bidirectional streets, so the street network is a tree.
-                Landmark $i$ has a significance value $c_i$.
+                Connectopolis có $n$ địa điểm được nối bởi $n-1$ con đường hai chiều, vì vậy mạng đường tạo thành một cây. Địa điểm $i$ có giá trị ý nghĩa $c_i$.
 
-                Each query gives five integers $u, w, x, y, z$. The value $u$ is accepted as part of the original query format;
-                the pair-counting condition depends on the two paths $w \\to x$ and $y \\to z$.
+                Mỗi truy vấn gồm năm số nguyên $u, w, x, y, z$. Giá trị $u$ được giữ như một phần của định dạng truy vấn gốc; điều kiện đếm cặp chỉ phụ thuộc vào hai đường đi $w \\to x$ và $y \\to z$.
 
-                For each query, count ordered pairs $(i, j)$ such that $i \\ne j$, landmark $i$ lies on the path from $w$ to $x$,
-                landmark $j$ lies on the path from $y$ to $z$, and $c_i = c_j$.
+                Với mỗi truy vấn, hãy đếm số cặp có thứ tự $(i, j)$ sao cho $i \\ne j$, địa điểm $i$ nằm trên đường đi từ $w$ đến $x$, địa điểm $j$ nằm trên đường đi từ $y$ đến $z$, và $c_i = c_j$.
                 """);
         dto.setInputFormat("""
                 Dòng đầu chứa hai số nguyên $n$ và $q$.
@@ -422,7 +433,25 @@ public class ProblemService {
         family.setReason("Covers tree paths, repeated values, overlapping paths, and self-pair exclusion.");
         plan.setTestFamilies(List.of(family));
         dto.setTestPlan(plan);
+        dto.setSemanticSpec(connectopolisSemanticSpec());
         return dto;
+    }
+
+    private SemanticSpecDTO connectopolisSemanticSpec() {
+        SemanticSpecDTO spec = new SemanticSpecDTO();
+        spec.setQueryVariables(List.of("u", "w", "x", "y", "z"));
+        spec.setIgnoredVariables(List.of("u"));
+        spec.setPaths(List.of(List.of("w", "x"), List.of("y", "z")));
+        spec.setConditions(List.of(
+                "i in path(w,x)",
+                "j in path(y,z)",
+                "c[i] == c[j]",
+                "i != j"
+        ));
+        spec.setGraphType("tree");
+        spec.setCountedObjects(List.of("ordered pair (i,j)"));
+        spec.setOutputSemantics("one integer answer for each query");
+        return spec;
     }
 
     private Problem saveProblemMetadata(Problem existingProblem, String title, String description, AiResponseDTO dto) {

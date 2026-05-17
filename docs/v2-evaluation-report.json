@@ -1,0 +1,360 @@
+{
+  "groups" : {
+    "correctlyClassifiedAndSupported" : [ "GCD of Two Numbers (SCALAR_ONLY -> GCD_PAIR)", "Sweet Chocolate Sharing (SCALAR_ONLY -> GCD_PAIR)", "Maximum Subarray Sum (ARRAY -> MAXIMUM_SUBARRAY)", "Optimal Shop Selection (ARRAY -> MAXIMUM_SUBARRAY)", "Large Array Sum (NUMERIC_OVERFLOW_STRESS -> ARRAY_SUM_OVERFLOW)", "Tree Distance (GRAPH_TREE -> TREE_DISTANCE_QUERIES)", "Tree Subtree Aggregation (GRAPH_TREE -> TREE_DP_SUBTREE_SUM)", "Weighted Shortest Path (GRAPH_TREE -> GRAPH_SHORTEST_PATH)", "Graph Connectivity (GRAPH_TREE -> GRAPH_DSU_COMPONENTS)", "Course Schedule (GRAPH_TREE -> GRAPH_TOPOLOGICAL_ORDER)", "Graph Reachability BFS (GRAPH_TREE -> GRAPH_REACHABILITY)", "Power Tower 3D Commands (GRID -> POWER_TOWER_3D_COMMANDS)", "Danger Detection (GRID -> GRID_DANGER_DETECTION)", "Range Sum Queries (RANGE_QUERY_UPDATE -> RANGE_SUM_QUERIES)", "Coin Change Problem (DYNAMIC_PROGRAMMING -> COIN_CHANGE_MIN_COINS)", "Classic 0/1 Knapsack (DYNAMIC_PROGRAMMING -> KNAPSACK_01)", "Longest Increasing Subsequence (DYNAMIC_PROGRAMMING -> LIS_LENGTH)", "Bitmask Assignment (DYNAMIC_PROGRAMMING -> BITMASK_ASSIGNMENT)", "Fibonacci Power Sum (NUMBER_THEORY -> FIBONACCI_POWER_SUM)", "Journey to Sequence Sum (NUMBER_THEORY -> WEIGHTED_SEQUENCE_SUM)", "Segment Tree Range Sum (DATA_STRUCTURE -> SEGMENT_TREE_RANGE_SUM_UPDATE)", "Fenwick Point Update (DATA_STRUCTURE -> FENWICK_POINT_UPDATE_RANGE_SUM)", "Substring Hashing Equality (STRING -> STRING_SUBSTRING_EQUALITY)", "KMP Pattern Occurrences (STRING -> STRING_KMP_COUNT)", "Binary Search Lower Bound (ARRAY -> BINARY_SEARCH_LOWER_BOUND)", "Harry's Magical Number (GENERAL -> BINARY_SEARCH_MIN_FEASIBLE)", "Two Pointer Pair Count (GENERAL -> TWO_POINTER_PAIR_COUNT)", "Greedy Interval Scheduling (GENERAL -> GREEDY_INTERVAL_SCHEDULING)", "Mingle Lineup Inversion Minimization (ARRAY -> INSERTION_INVERSION_MINIMIZATION)", "Exact Permutation Mapping (COMBINATORICS -> PERMUTATION_RANK_UNRANK)", "Intricate Polygons Subset Counting (COMBINATORICS -> POLYGON_SUBSET_COUNT)", "Even Odd Permutation Constructive (CONSTRUCTIVE -> CONSTRUCTIVE_EVEN_ODD_PERMUTATION)", "Smallest Digit Product (DIGIT_PRODUCT_FACTORIZATION -> DIGIT_PRODUCT_FACTORIZATION)", "Rightmost Cow Game (GAME_THEORY -> MAX_WELTER_COW_GAME)", "Stones Subtraction Pile Game (GAME_THEORY -> SUBTRACTION_GAME)" ],
+    "recognizedButUnsupported" : [ "Prime Counting (NUMBER_THEORY -> PRIME_COUNT)", "Combinatorics Combinations (NUMBER_THEORY -> NCR_MOD)", "Goals (GAME_THEORY -> EXPECTED_VALUE_OPTIMAL_PLAY)" ],
+    "unknown" : [ ],
+    "falsePositivePatternSelections" : [ ]
+  },
+  "summary" : {
+    "familyAccuracy" : 1.0,
+    "patternAccuracy" : 1.0,
+    "generationReadyCount" : 35,
+    "correctFamilies" : 38,
+    "generationReadyAccuracy" : 0.9210526315789473,
+    "correctPatterns" : 38,
+    "totalItems" : 38
+  },
+  "details" : [ {
+    "actualFamily" : "SCALAR_ONLY",
+    "actualPattern" : "GCD_PAIR",
+    "familyCorrect" : true,
+    "title" : "GCD of Two Numbers",
+    "expectedPattern" : "GCD_PAIR",
+    "patternCorrect" : true,
+    "expectedFamily" : "SCALAR_ONLY",
+    "supported" : true
+  }, {
+    "actualFamily" : "SCALAR_ONLY",
+    "actualPattern" : "GCD_PAIR",
+    "familyCorrect" : true,
+    "title" : "Sweet Chocolate Sharing",
+    "expectedPattern" : "GCD_PAIR",
+    "patternCorrect" : true,
+    "expectedFamily" : "SCALAR_ONLY",
+    "supported" : true
+  }, {
+    "actualFamily" : "ARRAY",
+    "actualPattern" : "MAXIMUM_SUBARRAY",
+    "familyCorrect" : true,
+    "title" : "Maximum Subarray Sum",
+    "expectedPattern" : "MAXIMUM_SUBARRAY",
+    "patternCorrect" : true,
+    "expectedFamily" : "ARRAY",
+    "supported" : true
+  }, {
+    "actualFamily" : "ARRAY",
+    "actualPattern" : "MAXIMUM_SUBARRAY",
+    "familyCorrect" : true,
+    "title" : "Optimal Shop Selection",
+    "expectedPattern" : "MAXIMUM_SUBARRAY",
+    "patternCorrect" : true,
+    "expectedFamily" : "ARRAY",
+    "supported" : true
+  }, {
+    "actualFamily" : "NUMERIC_OVERFLOW_STRESS",
+    "actualPattern" : "ARRAY_SUM_OVERFLOW",
+    "familyCorrect" : true,
+    "title" : "Large Array Sum",
+    "expectedPattern" : "ARRAY_SUM_OVERFLOW",
+    "patternCorrect" : true,
+    "expectedFamily" : "NUMERIC_OVERFLOW_STRESS",
+    "supported" : true
+  }, {
+    "actualFamily" : "GRAPH_TREE",
+    "actualPattern" : "TREE_DISTANCE_QUERIES",
+    "familyCorrect" : true,
+    "title" : "Tree Distance",
+    "expectedPattern" : "TREE_DISTANCE_QUERIES",
+    "patternCorrect" : true,
+    "expectedFamily" : "GRAPH_TREE",
+    "supported" : true
+  }, {
+    "actualFamily" : "GRAPH_TREE",
+    "actualPattern" : "TREE_DP_SUBTREE_SUM",
+    "familyCorrect" : true,
+    "title" : "Tree Subtree Aggregation",
+    "expectedPattern" : "TREE_DP_SUBTREE_SUM",
+    "patternCorrect" : true,
+    "expectedFamily" : "GRAPH_TREE",
+    "supported" : true
+  }, {
+    "actualFamily" : "GRAPH_TREE",
+    "actualPattern" : "GRAPH_SHORTEST_PATH",
+    "familyCorrect" : true,
+    "title" : "Weighted Shortest Path",
+    "expectedPattern" : "GRAPH_SHORTEST_PATH",
+    "patternCorrect" : true,
+    "expectedFamily" : "GRAPH_TREE",
+    "supported" : true
+  }, {
+    "actualFamily" : "GRAPH_TREE",
+    "actualPattern" : "GRAPH_DSU_COMPONENTS",
+    "familyCorrect" : true,
+    "title" : "Graph Connectivity",
+    "expectedPattern" : "GRAPH_DSU_COMPONENTS",
+    "patternCorrect" : true,
+    "expectedFamily" : "GRAPH_TREE",
+    "supported" : true
+  }, {
+    "actualFamily" : "GRAPH_TREE",
+    "actualPattern" : "GRAPH_TOPOLOGICAL_ORDER",
+    "familyCorrect" : true,
+    "title" : "Course Schedule",
+    "expectedPattern" : "GRAPH_TOPOLOGICAL_ORDER",
+    "patternCorrect" : true,
+    "expectedFamily" : "GRAPH_TREE",
+    "supported" : true
+  }, {
+    "actualFamily" : "GRAPH_TREE",
+    "actualPattern" : "GRAPH_REACHABILITY",
+    "familyCorrect" : true,
+    "title" : "Graph Reachability BFS",
+    "expectedPattern" : "GRAPH_REACHABILITY",
+    "patternCorrect" : true,
+    "expectedFamily" : "GRAPH_TREE",
+    "supported" : true
+  }, {
+    "actualFamily" : "GRID",
+    "actualPattern" : "POWER_TOWER_3D_COMMANDS",
+    "familyCorrect" : true,
+    "title" : "Power Tower 3D Commands",
+    "expectedPattern" : "POWER_TOWER_3D_COMMANDS",
+    "patternCorrect" : true,
+    "expectedFamily" : "GRID",
+    "supported" : true
+  }, {
+    "actualFamily" : "GRID",
+    "actualPattern" : "GRID_DANGER_DETECTION",
+    "familyCorrect" : true,
+    "title" : "Danger Detection",
+    "expectedPattern" : "GRID_DANGER_DETECTION",
+    "patternCorrect" : true,
+    "expectedFamily" : "GRID",
+    "supported" : true
+  }, {
+    "actualFamily" : "RANGE_QUERY_UPDATE",
+    "actualPattern" : "RANGE_SUM_QUERIES",
+    "familyCorrect" : true,
+    "title" : "Range Sum Queries",
+    "expectedPattern" : "RANGE_SUM_QUERIES",
+    "patternCorrect" : true,
+    "expectedFamily" : "RANGE_QUERY_UPDATE",
+    "supported" : true
+  }, {
+    "actualFamily" : "DYNAMIC_PROGRAMMING",
+    "actualPattern" : "COIN_CHANGE_MIN_COINS",
+    "familyCorrect" : true,
+    "title" : "Coin Change Problem",
+    "expectedPattern" : "COIN_CHANGE_MIN_COINS",
+    "patternCorrect" : true,
+    "expectedFamily" : "DYNAMIC_PROGRAMMING",
+    "supported" : true
+  }, {
+    "actualFamily" : "DYNAMIC_PROGRAMMING",
+    "actualPattern" : "KNAPSACK_01",
+    "familyCorrect" : true,
+    "title" : "Classic 0/1 Knapsack",
+    "expectedPattern" : "KNAPSACK_01",
+    "patternCorrect" : true,
+    "expectedFamily" : "DYNAMIC_PROGRAMMING",
+    "supported" : true
+  }, {
+    "actualFamily" : "DYNAMIC_PROGRAMMING",
+    "actualPattern" : "LIS_LENGTH",
+    "familyCorrect" : true,
+    "title" : "Longest Increasing Subsequence",
+    "expectedPattern" : "LIS_LENGTH",
+    "patternCorrect" : true,
+    "expectedFamily" : "DYNAMIC_PROGRAMMING",
+    "supported" : true
+  }, {
+    "actualFamily" : "DYNAMIC_PROGRAMMING",
+    "actualPattern" : "BITMASK_ASSIGNMENT",
+    "familyCorrect" : true,
+    "title" : "Bitmask Assignment",
+    "expectedPattern" : "BITMASK_ASSIGNMENT",
+    "patternCorrect" : true,
+    "expectedFamily" : "DYNAMIC_PROGRAMMING",
+    "supported" : true
+  }, {
+    "actualFamily" : "NUMBER_THEORY",
+    "actualPattern" : "FIBONACCI_POWER_SUM",
+    "familyCorrect" : true,
+    "title" : "Fibonacci Power Sum",
+    "expectedPattern" : "FIBONACCI_POWER_SUM",
+    "patternCorrect" : true,
+    "expectedFamily" : "NUMBER_THEORY",
+    "supported" : true
+  }, {
+    "actualFamily" : "NUMBER_THEORY",
+    "actualPattern" : "WEIGHTED_SEQUENCE_SUM",
+    "familyCorrect" : true,
+    "title" : "Journey to Sequence Sum",
+    "expectedPattern" : "WEIGHTED_SEQUENCE_SUM",
+    "patternCorrect" : true,
+    "expectedFamily" : "NUMBER_THEORY",
+    "supported" : true
+  }, {
+    "actualFamily" : "NUMBER_THEORY",
+    "actualPattern" : "PRIME_COUNT",
+    "familyCorrect" : true,
+    "title" : "Prime Counting",
+    "expectedPattern" : "PRIME_COUNT",
+    "patternCorrect" : true,
+    "expectedFamily" : "NUMBER_THEORY",
+    "supported" : false
+  }, {
+    "actualFamily" : "NUMBER_THEORY",
+    "actualPattern" : "NCR_MOD",
+    "familyCorrect" : true,
+    "title" : "Combinatorics Combinations",
+    "expectedPattern" : "NCR_MOD",
+    "patternCorrect" : true,
+    "expectedFamily" : "NUMBER_THEORY",
+    "supported" : false
+  }, {
+    "actualFamily" : "DATA_STRUCTURE",
+    "actualPattern" : "SEGMENT_TREE_RANGE_SUM_UPDATE",
+    "familyCorrect" : true,
+    "title" : "Segment Tree Range Sum",
+    "expectedPattern" : "SEGMENT_TREE_RANGE_SUM_UPDATE",
+    "patternCorrect" : true,
+    "expectedFamily" : "DATA_STRUCTURE",
+    "supported" : true
+  }, {
+    "actualFamily" : "DATA_STRUCTURE",
+    "actualPattern" : "FENWICK_POINT_UPDATE_RANGE_SUM",
+    "familyCorrect" : true,
+    "title" : "Fenwick Point Update",
+    "expectedPattern" : "FENWICK_POINT_UPDATE_RANGE_SUM",
+    "patternCorrect" : true,
+    "expectedFamily" : "DATA_STRUCTURE",
+    "supported" : true
+  }, {
+    "actualFamily" : "STRING",
+    "actualPattern" : "STRING_SUBSTRING_EQUALITY",
+    "familyCorrect" : true,
+    "title" : "Substring Hashing Equality",
+    "expectedPattern" : "STRING_SUBSTRING_EQUALITY",
+    "patternCorrect" : true,
+    "expectedFamily" : "STRING",
+    "supported" : true
+  }, {
+    "actualFamily" : "STRING",
+    "actualPattern" : "STRING_KMP_COUNT",
+    "familyCorrect" : true,
+    "title" : "KMP Pattern Occurrences",
+    "expectedPattern" : "STRING_KMP_COUNT",
+    "patternCorrect" : true,
+    "expectedFamily" : "STRING",
+    "supported" : true
+  }, {
+    "actualFamily" : "ARRAY",
+    "actualPattern" : "BINARY_SEARCH_LOWER_BOUND",
+    "familyCorrect" : true,
+    "title" : "Binary Search Lower Bound",
+    "expectedPattern" : "BINARY_SEARCH_LOWER_BOUND",
+    "patternCorrect" : true,
+    "expectedFamily" : "ARRAY",
+    "supported" : true
+  }, {
+    "actualFamily" : "GENERAL",
+    "actualPattern" : "BINARY_SEARCH_MIN_FEASIBLE",
+    "familyCorrect" : true,
+    "title" : "Harry's Magical Number",
+    "expectedPattern" : "BINARY_SEARCH_MIN_FEASIBLE",
+    "patternCorrect" : true,
+    "expectedFamily" : "GENERAL",
+    "supported" : true
+  }, {
+    "actualFamily" : "GENERAL",
+    "actualPattern" : "TWO_POINTER_PAIR_COUNT",
+    "familyCorrect" : true,
+    "title" : "Two Pointer Pair Count",
+    "expectedPattern" : "TWO_POINTER_PAIR_COUNT",
+    "patternCorrect" : true,
+    "expectedFamily" : "GENERAL",
+    "supported" : true
+  }, {
+    "actualFamily" : "GENERAL",
+    "actualPattern" : "GREEDY_INTERVAL_SCHEDULING",
+    "familyCorrect" : true,
+    "title" : "Greedy Interval Scheduling",
+    "expectedPattern" : "GREEDY_INTERVAL_SCHEDULING",
+    "patternCorrect" : true,
+    "expectedFamily" : "GENERAL",
+    "supported" : true
+  }, {
+    "actualFamily" : "ARRAY",
+    "actualPattern" : "INSERTION_INVERSION_MINIMIZATION",
+    "familyCorrect" : true,
+    "title" : "Mingle Lineup Inversion Minimization",
+    "expectedPattern" : "INSERTION_INVERSION_MINIMIZATION",
+    "patternCorrect" : true,
+    "expectedFamily" : "ARRAY",
+    "supported" : true
+  }, {
+    "actualFamily" : "COMBINATORICS",
+    "actualPattern" : "PERMUTATION_RANK_UNRANK",
+    "familyCorrect" : true,
+    "title" : "Exact Permutation Mapping",
+    "expectedPattern" : "PERMUTATION_RANK_UNRANK",
+    "patternCorrect" : true,
+    "expectedFamily" : "COMBINATORICS",
+    "supported" : true
+  }, {
+    "actualFamily" : "COMBINATORICS",
+    "actualPattern" : "POLYGON_SUBSET_COUNT",
+    "familyCorrect" : true,
+    "title" : "Intricate Polygons Subset Counting",
+    "expectedPattern" : "POLYGON_SUBSET_COUNT",
+    "patternCorrect" : true,
+    "expectedFamily" : "COMBINATORICS",
+    "supported" : true
+  }, {
+    "actualFamily" : "CONSTRUCTIVE",
+    "actualPattern" : "CONSTRUCTIVE_EVEN_ODD_PERMUTATION",
+    "familyCorrect" : true,
+    "title" : "Even Odd Permutation Constructive",
+    "expectedPattern" : "CONSTRUCTIVE_EVEN_ODD_PERMUTATION",
+    "patternCorrect" : true,
+    "expectedFamily" : "CONSTRUCTIVE",
+    "supported" : true
+  }, {
+    "actualFamily" : "DIGIT_PRODUCT_FACTORIZATION",
+    "actualPattern" : "DIGIT_PRODUCT_FACTORIZATION",
+    "familyCorrect" : true,
+    "title" : "Smallest Digit Product",
+    "expectedPattern" : "DIGIT_PRODUCT_FACTORIZATION",
+    "patternCorrect" : true,
+    "expectedFamily" : "DIGIT_PRODUCT_FACTORIZATION",
+    "supported" : true
+  }, {
+    "actualFamily" : "GAME_THEORY",
+    "actualPattern" : "MAX_WELTER_COW_GAME",
+    "familyCorrect" : true,
+    "title" : "Rightmost Cow Game",
+    "expectedPattern" : "MAX_WELTER_COW_GAME",
+    "patternCorrect" : true,
+    "expectedFamily" : "GAME_THEORY",
+    "supported" : true
+  }, {
+    "actualFamily" : "GAME_THEORY",
+    "actualPattern" : "SUBTRACTION_GAME",
+    "familyCorrect" : true,
+    "title" : "Stones Subtraction Pile Game",
+    "expectedPattern" : "SUBTRACTION_GAME",
+    "patternCorrect" : true,
+    "expectedFamily" : "GAME_THEORY",
+    "supported" : true
+  }, {
+    "actualFamily" : "GAME_THEORY",
+    "actualPattern" : "EXPECTED_VALUE_OPTIMAL_PLAY",
+    "familyCorrect" : true,
+    "title" : "Goals",
+    "expectedPattern" : "EXPECTED_VALUE_OPTIMAL_PLAY",
+    "patternCorrect" : true,
+    "expectedFamily" : "GAME_THEORY",
+    "supported" : false
+  } ]
+}

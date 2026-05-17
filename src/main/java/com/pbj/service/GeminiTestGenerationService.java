@@ -93,10 +93,19 @@ public class GeminiTestGenerationService {
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", "Reply with OK.")))),
                 "generationConfig", Map.of(
                         "temperature", 0,
-                        "maxOutputTokens", 16
+                        "maxOutputTokens", 64
                 )
         );
-        executeGeminiRequest(requestBody, "Gemini API key preflight");
+        try {
+            executeGeminiRequest(requestBody, "Gemini API key preflight");
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "" : e.getMessage();
+            if (message.contains("Chưa cấu hình Gemini API key")) {
+                throw e;
+            }
+            System.err.println("WARN: Gemini API key preflight failed; continuing to real pipeline request. Cause: "
+                    + truncate(message, 240));
+        }
         lastSuccessfulPreflightAtMs = System.currentTimeMillis();
     }
 
@@ -649,33 +658,34 @@ public class GeminiTestGenerationService {
             dto.setCheckerCode(root.path("checker_code").asText(""));
             dto.setValidatorCode(readCodeField(root, "validator_code"));
             dto.setTotalTestcases(root.path("total_testcases").asInt(10));
-            dto.setGeneratorLanguage(root.path("generator_language").asText("python"));
+            dto.setGeneratorLanguage(root.path("generator_language").asText(
+                    root.has("generator_code_b64") ? "cpp" : "python"));
             
             // New Base64 support
             if (root.has("generator_code_b64")) {
                 dto.setGeneratorCodeB64(root.path("generator_code_b64").asText(""));
-                dto.setGeneratorCode(decodeBase64(dto.getGeneratorCodeB64()));
+                dto.setGeneratorCode(readCodeField(root, "generator_code"));
             } else {
                 dto.setGeneratorCode(root.path("generator_code").asText(""));
             }
 
             if (root.has("golden_solution_b64")) {
                 dto.setGoldenSolutionB64(root.path("golden_solution_b64").asText(""));
-                dto.setGoldenSolution(decodeBase64(dto.getGoldenSolutionB64()));
+                dto.setGoldenSolution(readCodeField(root, "golden_solution"));
             } else {
                 dto.setGoldenSolution(readCodeField(root, "golden_solution"));
             }
 
             if (root.has("bruteforce_solution_b64")) {
                 dto.setBruteForceSolutionB64(root.path("bruteforce_solution_b64").asText(""));
-                dto.setBruteForceSolution(decodeBase64(dto.getBruteForceSolutionB64()));
+                dto.setBruteForceSolution(readCodeField(root, "bruteforce_solution"));
             } else {
                 dto.setBruteForceSolution(readCodeField(root, "bruteforce_solution"));
             }
 
             if (root.has("validator_code_b64")) {
                 dto.setValidatorCodeB64(root.path("validator_code_b64").asText(""));
-                dto.setValidatorCode(decodeBase64(dto.getValidatorCodeB64()));
+                dto.setValidatorCode(readCodeField(root, "validator_code"));
             } else {
                 dto.setValidatorCode(readCodeField(root, "validator_code"));
             }
@@ -1129,6 +1139,7 @@ public class GeminiTestGenerationService {
                 - tree_edges: N nodes, N-1 edges
                 - grid: H x W grid of values
                 - command_based: sequence of different operations (UPDATE, QUERY, etc.)
+                - interactive_like_not_supported: interactive or adaptive judge protocol; mark unsupported
                 - multiple_sections: distinct parts in input
                 
                 Analyze risks: integer overflow, time limits (TLE), precision, corner cases.

@@ -74,7 +74,8 @@ public class AiIntegrationService {
         
         // Step 2: Generation (Call 2)
         System.out.println("INFO: [AI Pipeline] Step 2 - Gemini artifact generation...");
-        AiResponseDTO dto = geminiTestGenerationService.generateTestArtifacts(problemText, analysis, count);
+        AiResponseDTO dto = normalizeArtifacts(geminiTestGenerationService.generateTestArtifacts(problemText, analysis, count));
+        installSystemGeneratorIfNeeded(dto, problemText);
 
         // Step 3: Backend Cross-Check (Brute vs Golden)
         System.out.println("INFO: [AI Pipeline] Step 3 - Backend verification (Brute vs Golden)...");
@@ -84,9 +85,10 @@ public class AiIntegrationService {
         if (!report.passed) {
             System.err.println("WARN: Brute vs Golden verification failed: " + report.message);
             // Try to repair if mismatch
-            if (report.message.contains("mismatch")) {
+            if (isMismatchReport(report)) {
                  System.out.println("INFO: [AI Pipeline] Verification mismatch - attempting repair...");
-                 dto = geminiTestGenerationService.repairFormalSpec(problemText, dto, "Brute vs Golden mismatch: " + report.message);
+                 dto = normalizeArtifacts(geminiTestGenerationService.repairFormalSpec(problemText, dto, "Brute vs Golden mismatch: " + report.message));
+                 installSystemGeneratorIfNeeded(dto, problemText);
                  report = verificationService.verifyBruteVsGolden(dto, 5);
                  dto.setVerificationReport(verificationService.reportToJson(report));
             }
@@ -100,6 +102,26 @@ public class AiIntegrationService {
         }
 
         return dto;
+    }
+
+    private boolean isMismatchReport(VerificationService.VerificationReport report) {
+        return report != null
+                && report.message != null
+                && report.message.toLowerCase(Locale.ROOT).contains("mismatch");
+    }
+
+    private void installSystemGeneratorIfNeeded(AiResponseDTO dto, String problemText) {
+        if (dto == null || systemTestcaseGeneratorService == null) {
+            return;
+        }
+        if (dto.getGeneratorCode() != null && !dto.getGeneratorCode().isBlank()) {
+            return;
+        }
+        String generated = systemTestcaseGeneratorService.buildGenerator(dto, problemText);
+        if (generated != null && !generated.isBlank()) {
+            dto.setGeneratorCode(generated);
+            dto.setGeneratorLanguage("cpp");
+        }
     }
 
     private AiResponseDTO normalizeArtifacts(AiResponseDTO dto) {
@@ -189,7 +211,13 @@ public class AiIntegrationService {
         }
 
         System.out.println("INFO: [AI Pipeline] OCR - Gemini extracting problem text from image...");
-        String extractedText = geminiTestGenerationService.extractProblemText(problemDescription, base64Images);
+        String extractedText;
+        try {
+            extractedText = geminiTestGenerationService.extractProblemText(problemDescription, base64Images);
+        } catch (RuntimeException e) {
+            System.err.println("WARN: Gemini OCR failed; falling back to text description. Cause: " + e.getMessage());
+            return problemDescription != null ? problemDescription : "(problem from attached image)";
+        }
         if (extractedText == null || extractedText.isBlank()) {
             System.err.println("WARN: Gemini OCR failed; falling back to text description.");
             return problemDescription != null ? problemDescription : "(problem from attached image)";

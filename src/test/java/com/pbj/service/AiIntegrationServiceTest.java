@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -19,19 +20,13 @@ import static org.mockito.Mockito.when;
 class AiIntegrationServiceTest {
 
     @Test
-    void fallsBackToSourceOnlyGeminiGenerationWhenRepairStillDrifts() {
+    void installsBackendGeneratorBeforeVerificationInTwoCallPipeline() {
         AiCacheRepository cacheRepository = mock(AiCacheRepository.class);
         AiJobQueueService queueService = new AiJobQueueService();
-        AiResponseDTO drifted = cubeSummationDto();
-        AiResponseDTO grounded = connectopolisDto();
+        AiResponseDTO generatedDto = connectopolisDto();
+        generatedDto.setGeneratorCode("");
         int[] generationCalls = {0};
-        int[] repairCalls = {0};
-        OllamaAnalysisService ollamaAnalysisService = new OllamaAnalysisService() {
-            @Override
-            public String analyzeProblem(String problemText) {
-                return "{\"problem_type\":\"wrong\"}";
-            }
-        };
+        int[] verificationCalls = {0};
         GeminiTestGenerationService geminiService = new GeminiTestGenerationService() {
             @Override
             public void verifyApiKeysBeforePipeline() {
@@ -39,15 +34,18 @@ class AiIntegrationServiceTest {
             }
 
             @Override
-            public AiResponseDTO generateTestArtifacts(String problemText, AiProblemAnalysisDTO analysis, int count) {
-                generationCalls[0]++;
-                return analysis == null ? grounded : drifted;
+            public AiProblemAnalysisDTO analyzeProblem(String problemText) {
+                AiProblemAnalysisDTO analysis = new AiProblemAnalysisDTO();
+                analysis.setProblemType("alternating_shortest_path");
+                analysis.setAlgorithmFamily("dijkstra_state_graph");
+                analysis.setInputPattern("graph_edges");
+                return analysis;
             }
 
             @Override
-            public AiResponseDTO repairFormalSpec(String problemText, AiResponseDTO brokenDto, String validationError) {
-                repairCalls[0]++;
-                return drifted;
+            public AiResponseDTO generateTestArtifacts(String problemText, AiProblemAnalysisDTO analysis, int count) {
+                generationCalls[0]++;
+                return generatedDto;
             }
 
             @Override
@@ -64,6 +62,16 @@ class AiIntegrationServiceTest {
 
         when(cacheRepository.findByRequestHash(anyString())).thenReturn(Optional.empty());
         when(cacheRepository.save(any(AiCache.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        VerificationService verificationService = mock(VerificationService.class);
+        VerificationService.VerificationReport report = new VerificationService.VerificationReport();
+        report.passed = true;
+        report.message = "Verified successfully";
+        when(verificationService.verifyBruteVsGolden(any(AiResponseDTO.class), anyInt())).thenAnswer(invocation -> {
+            verificationCalls[0]++;
+            return report;
+        });
+        when(verificationService.reportToJson(any(VerificationService.VerificationReport.class)))
+                .thenAnswer(invocation -> new ObjectMapper().valueToTree(invocation.getArgument(0)));
 
         ReflectionTestUtils.setField(queueService, "maxConcurrency", 1);
         ReflectionTestUtils.invokeMethod(queueService, "init");
@@ -71,12 +79,12 @@ class AiIntegrationServiceTest {
         AiIntegrationService service = new AiIntegrationService(
                 cacheRepository,
                 queueService,
-                ollamaAnalysisService,
+                null,
                 null, // ollamaGeneratorService
                 geminiService,
                 new FormalSpecValidationService(),
                 testcaseGeneratorService,
-                mock(VerificationService.class),
+                verificationService,
                 new ObjectMapper()
         );
 
@@ -91,8 +99,9 @@ class AiIntegrationServiceTest {
 
         assertThat(result.getInputSchema().path("lines").get(1).path("kind").asText()).isEqualTo("edges");
         assertThat(result.getGeneratorCode()).isEqualTo("generated");
-        assertThat(generationCalls[0]).isEqualTo(2);
-        assertThat(repairCalls[0]).isEqualTo(1);
+        assertThat(result.getGeneratorLanguage()).isEqualTo("cpp");
+        assertThat(generationCalls[0]).isEqualTo(1);
+        assertThat(verificationCalls[0]).isEqualTo(1);
     }
 
     @Test

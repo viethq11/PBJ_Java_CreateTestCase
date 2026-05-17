@@ -11,7 +11,7 @@ services:
       - SPRING_DATASOURCE_SLAVE_JDBC_URL=jdbc:mysql://mysql-master:3306/pbj_judge?allowPublicKeyRetrieval=true&useSSL=false
       - SPRING_DATASOURCE_SLAVE_USERNAME=root
       - SPRING_DATASOURCE_SLAVE_PASSWORD=root_password
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_API_KEYS=${GEMINI_API_KEYS:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - GEMINI_PRO_MODEL=${GEMINI_PRO_MODEL:-gemini-2.5-flash}

@@ -47,7 +47,7 @@ ai:
     api-keys: ${GEMINI_API_KEYS:}
     model: ${GEMINI_MODEL:gemini-2.5-flash}
     pro-model: ${GEMINI_PRO_MODEL:${GEMINI_MODEL:gemini-2.5-flash}}
-    timeout-seconds: 120
+    timeout-seconds: ${GEMINI_TIMEOUT_SECONDS:240}
   ollama:
     base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
     model: ${OLLAMA_MODEL:llama3.1:8b}

@@ -26,7 +26,7 @@ import java.util.Optional;
 public class AiIntegrationService {
     private static final String ANALYSIS_CACHE_PREFIX = "ollama_analysis_v6_grounded_";
     private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v9_artifact_only_";
-    private static final String PIPELINE_CACHE_PREFIX = "semantic_ir_pipeline_v12_";
+    private static final String PIPELINE_CACHE_PREFIX = "semantic_ir_pipeline_v13_raw_code_";
     private static final String PROBLEM_TEXT_CACHE_PREFIX = "problem_text_v3_cleaned_";
     private static final String SEMANTIC_SPEC_CACHE_PREFIX = "semantic_spec_v1_";
 
@@ -40,6 +40,7 @@ public class AiIntegrationService {
     private final VerificationService verificationService;
     private final SemanticSpecValidationService semanticSpecValidationService;
     private final OcrCleanerService ocrCleanerService;
+    private final TestProfileNormalizationService testProfileNormalizationService;
     private final ObjectMapper objectMapper;
 
     public AiResponseDTO generateTestCases(String problemDescription, List<String> base64Images, int count) {
@@ -166,6 +167,7 @@ public class AiIntegrationService {
         }
         if (dto != null) {
             dto.setEdgeCases(List.of());
+            dto.setTestProfiles(testProfileNormalizationService.normalize(dto));
         }
         return dto;
     }

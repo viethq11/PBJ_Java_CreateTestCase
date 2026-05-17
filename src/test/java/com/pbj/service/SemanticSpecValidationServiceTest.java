@@ -35,6 +35,30 @@ class SemanticSpecValidationServiceTest {
                 .hasMessageContaining("not frozen");
     }
 
+    @Test
+    void acceptsNonRelationalDecisionProblemWithoutConditions() {
+        SemanticSpecDTO spec = new SemanticSpecDTO();
+        spec.setQueryVariables(List.of());
+        spec.setIgnoredVariables(List.of());
+        spec.setPaths(List.of());
+        spec.setConditions(List.of());
+        spec.setGraphType("multi_test");
+        spec.setCountedObjects(List.of());
+        spec.setOutputSemantics("winner name per test case");
+
+        service.validate(spec);
+    }
+
+    @Test
+    void rejectsRelationalSpecWithoutConditions() {
+        SemanticSpecDTO spec = connectopolisSpec();
+        spec.setConditions(List.of());
+
+        assertThatThrownBy(() -> service.validate(spec))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("relational structure");
+    }
+
     private SemanticSpecDTO connectopolisSpec() {
         SemanticSpecDTO spec = new SemanticSpecDTO();
         spec.setQueryVariables(List.of("u", "w", "x", "y", "z"));

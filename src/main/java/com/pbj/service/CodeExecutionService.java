@@ -481,14 +481,11 @@ public class CodeExecutionService {
                                                 int timeLimitMs) {
         try {
             ProcessBuilder pb = buildSandboxedCommand(langInfo, dir, fileName);
+            File stdinFile = new File(dir, "program_stdin.txt");
+            Files.writeString(stdinFile.toPath(), input == null ? "" : input);
+            pb.redirectInput(stdinFile);
 
             Process process = pb.start();
-
-            // Feed input and close stdin immediately (prevents stdin-blocking)
-            try (BufferedWriter writer = new BufferedWriter(
-                    new OutputStreamWriter(process.getOutputStream()))) {
-                if (input != null) writer.write(input);
-            }
 
             boolean finished = process.waitFor(timeLimitMs + 2000L, TimeUnit.MILLISECONDS);
             if (!finished) {

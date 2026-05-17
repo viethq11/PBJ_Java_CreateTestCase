@@ -9,9 +9,10 @@ node_modules/
 dist/
 out/
 testcase_data/
-mysql/
+mysql/*_data/
 logs/
 .tools/
+tools/
 *.zip
 *.rar
 *.7z

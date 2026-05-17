@@ -6,8 +6,10 @@ import org.junit.jupiter.api.io.TempDir;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 class CodeExecutionServiceTest {
 
@@ -47,6 +49,21 @@ class CodeExecutionServiceTest {
         assertThat(result.success).isFalse();
         assertThat(result.output).isNull();
         assertThat(result.message).contains("Golden solution compilation failed");
+    }
+
+    @Test
+    void goldenSolutionTimesOutEvenWhenProgramNeverReadsLargeInput() {
+        String code = """
+                public class Main {
+                    public static void main(String[] args) throws Exception {
+                        Thread.sleep(10_000);
+                    }
+                }
+                """;
+        String largeInput = "x".repeat(2_000_000);
+
+        assertTimeoutPreemptively(Duration.ofSeconds(4), () ->
+                assertThat(service.runGoldenSolution(code, "java", largeInput, 100)).isNull());
     }
 
     @Test

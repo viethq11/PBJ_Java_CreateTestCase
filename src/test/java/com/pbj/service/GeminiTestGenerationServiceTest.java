@@ -55,6 +55,31 @@ class GeminiTestGenerationServiceTest {
     }
 
     @Test
+    void generationPromptV2RequestsRawCodeFieldsInsteadOfBase64() throws Exception {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        Method method = GeminiTestGenerationService.class.getDeclaredMethod(
+                "buildGenerationPromptV2",
+                com.pbj.dto.AiProblemAnalysisDTO.class,
+                com.pbj.dto.SemanticSpecDTO.class,
+                int.class);
+        method.setAccessible(true);
+
+        String prompt = (String) method.invoke(
+                service,
+                new com.pbj.dto.AiProblemAnalysisDTO(),
+                new com.pbj.dto.SemanticSpecDTO(),
+                20);
+
+        assertThat(prompt).contains("CODE FIELDS ARE RAW JSON STRINGS");
+        assertThat(prompt).contains("Do not Base64-encode code. Do not include *_b64 fields.");
+        assertThat(prompt).contains("\"generator_language\": \"cpp\"");
+        assertThat(prompt).contains("\"validator_code\": \"Raw C++ input validator source as a JSON string\"");
+        assertThat(prompt).contains("\"code\": \"Raw source code as a JSON string\"");
+        assertThat(prompt).doesNotContain("validator_code_b64");
+        assertThat(prompt).doesNotContain("code_b64");
+    }
+
+    @Test
     void geminiFailureMessageDoesNotMislabelGenericFailuresAsQuota() throws Exception {
         GeminiTestGenerationService service = new GeminiTestGenerationService();
         Method method = GeminiTestGenerationService.class.getDeclaredMethod(
@@ -155,6 +180,87 @@ class GeminiTestGenerationServiceTest {
         assertThat(normalizedLoopLine.path("length").asText()).isEqualTo("N");
         assertThat(normalizedLoopLine.path("columns")).hasSize(2);
         assertThat(normalizedLoopLine.path("columns").get(0).path("name").asText()).isEqualTo("x");
+    }
+
+    @Test
+    void parserDoesNotFailWhenLegacyB64FieldContainsRawCode() throws Exception {
+        String response = """
+                {
+                  "formatted_description": "Mo ta",
+                  "understanding": "summary",
+                  "input_format": "Input",
+                  "output_format": "Output",
+                  "constraints": "- 1 <= N <= 10",
+                  "checker_code": "",
+                  "validator_code_b64": "#include <bits/stdc++.h>\\nusing namespace std;\\nint main(){ int n; cin >> n; return 0; }",
+                  "bug_classes": [],
+                  "wrong_solutions": [],
+                  "test_profiles": [],
+                  "total_testcases": 1,
+                  "generator_language": "cpp",
+                  "generator_code": "#include <bits/stdc++.h>\\nint main(){return 0;}",
+                  "golden_solution": "#include <bits/stdc++.h>\\nint main(){return 0;}",
+                  "bruteforce_solution": "#include <bits/stdc++.h>\\nint main(){return 0;}",
+                  "bruteforce_language": "cpp",
+                  "validator_rules": [],
+                  "generation_strategy": {
+                    "small_cases": true,
+                    "random_cases": true,
+                    "edge_cases": true,
+                    "stress_cases": true
+                  },
+                  "edge_cases": []
+                }
+                """;
+
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        Method method = GeminiTestGenerationService.class.getDeclaredMethod("parseAnalysisResponse", String.class);
+        method.setAccessible(true);
+
+        AiResponseDTO dto = (AiResponseDTO) method.invoke(service, response);
+
+        assertThat(dto.getValidatorCode()).contains("cin >> n");
+        assertThat(dto.getValidatorCodeB64()).isNotBlank();
+    }
+
+    @Test
+    void parserNormalizesArrayWrappedTestPlanIntoSinglePlan() throws Exception {
+        String response = """
+                {
+                  "formatted_description": "Mo ta",
+                  "understanding": "summary",
+                  "input_format": "Input",
+                  "output_format": "Output",
+                  "constraints": "- 1 <= N <= 10",
+                  "test_plan": [
+                    {
+                      "problem_type": "GENERIC_SCHEMA",
+                      "intended_solution": "simulation",
+                      "test_families": []
+                    }
+                  ],
+                  "bug_classes": [],
+                  "wrong_solutions": [],
+                  "test_profiles": [],
+                  "total_testcases": 1,
+                  "generator_language": "cpp",
+                  "generator_code": "",
+                  "golden_solution": "",
+                  "bruteforce_solution": "",
+                  "bruteforce_language": "cpp",
+                  "validator_rules": [],
+                  "edge_cases": []
+                }
+                """;
+
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        Method method = GeminiTestGenerationService.class.getDeclaredMethod("parseAnalysisResponse", String.class);
+        method.setAccessible(true);
+
+        AiResponseDTO dto = (AiResponseDTO) method.invoke(service, response);
+
+        assertThat(dto.getTestPlan()).isNotNull();
+        assertThat(dto.getTestPlan().getProblemType()).isEqualTo("GENERIC_SCHEMA");
     }
 
     @Test

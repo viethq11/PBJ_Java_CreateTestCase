@@ -93,6 +93,7 @@ class AiIntegrationServiceTest {
                 verificationService,
                 new SemanticSpecValidationService(),
                 new OcrCleanerService(),
+                new TestProfileNormalizationService(),
                 new ObjectMapper()
         );
 
@@ -147,6 +148,7 @@ class AiIntegrationServiceTest {
                 mock(VerificationService.class),
                 new SemanticSpecValidationService(),
                 new OcrCleanerService(),
+                new TestProfileNormalizationService(),
                 new ObjectMapper()
         );
 

@@ -680,39 +680,14 @@ public class GeminiTestGenerationService {
                 dto.setInputSchema(normalizeInputSchema(inputSchemaNode));
             }
             dto.setCheckerCode(root.path("checker_code").asText(""));
-            dto.setValidatorCode(readCodeField(root, "validator_code"));
             dto.setTotalTestcases(root.path("total_testcases").asInt(10));
-            dto.setGeneratorLanguage(root.path("generator_language").asText(
-                    root.has("generator_code_b64") ? "cpp" : "python"));
-            
-            // New Base64 support
-            if (root.has("generator_code_b64")) {
-                dto.setGeneratorCodeB64(root.path("generator_code_b64").asText(""));
-                dto.setGeneratorCode(readCodeField(root, "generator_code"));
-            } else {
-                dto.setGeneratorCode(root.path("generator_code").asText(""));
-            }
+            dto.setGeneratorLanguage(root.path("generator_language").asText("cpp"));
 
-            if (root.has("golden_solution_b64")) {
-                dto.setGoldenSolutionB64(root.path("golden_solution_b64").asText(""));
-                dto.setGoldenSolution(readCodeField(root, "golden_solution"));
-            } else {
-                dto.setGoldenSolution(readCodeField(root, "golden_solution"));
-            }
-
-            if (root.has("bruteforce_solution_b64")) {
-                dto.setBruteForceSolutionB64(root.path("bruteforce_solution_b64").asText(""));
-                dto.setBruteForceSolution(readCodeField(root, "bruteforce_solution"));
-            } else {
-                dto.setBruteForceSolution(readCodeField(root, "bruteforce_solution"));
-            }
-
-            if (root.has("validator_code_b64")) {
-                dto.setValidatorCodeB64(root.path("validator_code_b64").asText(""));
-                dto.setValidatorCode(readCodeField(root, "validator_code"));
-            } else {
-                dto.setValidatorCode(readCodeField(root, "validator_code"));
-            }
+            dto.setGeneratorCode(readCodeField(root, "generator_code"));
+            dto.setGoldenSolution(readCodeField(root, "golden_solution"));
+            dto.setBruteForceSolution(readCodeField(root, "bruteforce_solution"));
+            dto.setValidatorCode(readCodeField(root, "validator_code"));
+            populateBackendBase64Fields(dto);
 
             if (root.has("input_model")) {
                 dto.setInputModel(root.path("input_model"));
@@ -725,7 +700,10 @@ public class GeminiTestGenerationService {
 
             JsonNode testPlanNode = root.path("test_plan");
             if (!testPlanNode.isMissingNode() && !testPlanNode.isNull()) {
-                dto.setTestPlan(objectMapper.treeToValue(testPlanNode, AiResponseDTO.TestPlan.class));
+                JsonNode normalizedTestPlanNode = normalizeTestPlanNode(testPlanNode);
+                if (!normalizedTestPlanNode.isMissingNode() && !normalizedTestPlanNode.isNull()) {
+                    dto.setTestPlan(objectMapper.treeToValue(normalizedTestPlanNode, AiResponseDTO.TestPlan.class));
+                }
             }
 
             JsonNode bugClassesNode = root.path("bug_classes");
@@ -833,6 +811,23 @@ public class GeminiTestGenerationService {
         return normalized;
     }
 
+    private JsonNode normalizeTestPlanNode(JsonNode testPlanNode) {
+        if (testPlanNode == null || testPlanNode.isMissingNode() || testPlanNode.isNull()) {
+            return testPlanNode;
+        }
+        if (testPlanNode.isObject()) {
+            return testPlanNode;
+        }
+        if (testPlanNode.isArray()) {
+            for (JsonNode candidate : testPlanNode) {
+                if (candidate != null && candidate.isObject()) {
+                    return candidate;
+                }
+            }
+        }
+        return objectMapper.createObjectNode();
+    }
+
     private void appendNormalizedLine(ArrayNode target, JsonNode line) {
         String kind = line.path("kind").asText("").trim().toLowerCase();
         if (kind.equals("tuple") || kind.equals("tuples") || kind.equals("record") || kind.equals("records")) {
@@ -933,20 +928,56 @@ public class GeminiTestGenerationService {
     }
 
     private String readCodeField(JsonNode root, String plainFieldName) {
+        String plain = root.path(plainFieldName).asText("");
+        if (!plain.isBlank()) {
+            return plain;
+        }
+
         String encodedFieldName = plainFieldName + "_b64";
         String encoded = root.path(encodedFieldName).asText("").trim();
         if (!encoded.isBlank()) {
-            return decodeBase64Utf8(encoded, encodedFieldName);
+            String decoded = tryDecodeBase64Utf8(encoded, encodedFieldName);
+            if (!decoded.isBlank()) {
+                return decoded;
+            }
+            if (looksLikeRawCode(encoded)) {
+                System.err.println("WARN: Treating " + encodedFieldName + " as raw code after invalid Base64.");
+                return encoded;
+            }
         }
-        return root.path(plainFieldName).asText("");
+        return "";
     }
 
-    private String decodeBase64Utf8(String value, String fieldName) {
+    private String tryDecodeBase64Utf8(String value, String fieldName) {
         try {
             return new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("Invalid base64 in field " + fieldName + ": " + e.getMessage(), e);
+            System.err.println("WARN: Invalid base64 in field " + fieldName + ": " + e.getMessage());
+            return "";
         }
+    }
+
+    private boolean looksLikeRawCode(String value) {
+        if (value == null || value.isBlank()) return false;
+        String lower = value.toLowerCase(Locale.ROOT);
+        return value.contains("#include")
+                || lower.contains("int main")
+                || lower.contains("using namespace")
+                || lower.contains("def main")
+                || value.contains("cin >>")
+                || value.contains("cout <<");
+    }
+
+    private void populateBackendBase64Fields(AiResponseDTO dto) {
+        dto.setGeneratorCodeB64(encodeBase64Utf8(dto.getGeneratorCode()));
+        dto.setGoldenSolutionB64(encodeBase64Utf8(dto.getGoldenSolution()));
+        dto.setBruteForceSolutionB64(encodeBase64Utf8(dto.getBruteForceSolution()));
+        dto.setValidatorCodeB64(encodeBase64Utf8(dto.getValidatorCode()));
+    }
+
+    private String encodeBase64Utf8(String value) {
+        if (value == null || value.isBlank()) return "";
+        return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private String executeGeminiRequest(Map<String, Object> requestBody, String errorPrefix) {
@@ -1285,16 +1316,17 @@ public class GeminiTestGenerationService {
                 Preliminary classification and input model hints:
                 %s
                 
-                ABSOLUTE RULE #1: CODE FIELDS MUST BE BASE64
-                To avoid JSON parsing errors with special characters or keywords like UPDATE/QUERY,
-                all source code fields MUST be returned as Base64-encoded strings.
+                ABSOLUTE RULE #1: CODE FIELDS ARE RAW JSON STRINGS
+                Return source code as normal JSON string values, escaped according to JSON rules.
+                Do not Base64-encode code. Do not include *_b64 fields.
+                Use \\n inside JSON strings for newlines and escape quotes/backslashes when needed.
                 
-                Fields to return in Base64:
-                - generator_code_b64
-                - bruteforce_solution_b64
-                - golden_solution_b64
-                - validator_code_b64
-                - wrong_solutions[].code_b64
+                Fields to return as raw source code strings:
+                - generator_code
+                - bruteforce_solution
+                - golden_solution
+                - validator_code
+                - wrong_solutions[].code
                 
                 ABSOLUTE RULE #2: TWO SOLUTIONS
                 - golden_solution: Optimized, intended for large constraints.
@@ -1320,17 +1352,18 @@ public class GeminiTestGenerationService {
                   "constraints": "...",
                   "semantic_spec": { ...same frozen semantic IR... },
                   "input_model": { ... },
-                  "generator_code_b64": "Base64 encoded C++ generator",
-                  "golden_solution_b64": "Base64 encoded C++17 optimized solution",
-                  "bruteforce_solution_b64": "Base64 encoded C++ simple solution",
-                  "validator_code_b64": "Base64 encoded C++ input validator",
+                  "generator_language": "cpp",
+                  "generator_code": "Raw C++ generator source as a JSON string",
+                  "golden_solution": "Raw C++17 optimized solution source as a JSON string",
+                  "bruteforce_solution": "Raw C++ simple solution source as a JSON string",
+                  "validator_code": "Raw C++ input validator source as a JSON string",
                   "test_profiles": [ ... ],
                   "bug_classes": [ ... ],
                   "wrong_solutions": [
                     {
                        "name": "...",
                        "type": "...",
-                       "code_b64": "Base64 encoded code"
+                       "code": "Raw source code as a JSON string"
                     }
                   ],
                   "total_testcases": %d

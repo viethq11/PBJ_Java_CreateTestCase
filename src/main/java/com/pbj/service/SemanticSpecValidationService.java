@@ -67,8 +67,14 @@ public class SemanticSpecValidationService {
         }
 
         List<String> conditions = spec.getConditions();
+        boolean relationBearingSpec = hasAny(spec.getQueryVariables())
+                || hasAny(spec.getPaths())
+                || hasAny(spec.getCountedObjects());
+        if ((conditions == null || conditions.isEmpty()) && relationBearingSpec) {
+            throw new IllegalStateException("Semantic spec with relational structure must freeze at least one condition.");
+        }
         if (conditions == null || conditions.isEmpty()) {
-            throw new IllegalStateException("Semantic spec must freeze at least one condition.");
+            conditions = List.of();
         }
         for (String condition : conditions) {
             if (condition == null || condition.isBlank()) {
@@ -118,6 +124,10 @@ public class SemanticSpecValidationService {
 
     private String cleanVariable(String variable) {
         return variable == null ? "" : variable.trim();
+    }
+
+    private boolean hasAny(List<?> values) {
+        return values != null && !values.isEmpty();
     }
 
     private List<String> uniqueClean(List<String> values) {

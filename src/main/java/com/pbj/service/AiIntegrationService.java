@@ -41,6 +41,8 @@ public class AiIntegrationService {
     private final SemanticSpecValidationService semanticSpecValidationService;
     private final OcrCleanerService ocrCleanerService;
     private final TestProfileNormalizationService testProfileNormalizationService;
+    private final SemanticArtifactCompilerService semanticArtifactCompilerService;
+    private final ProblemTextStructureCompilerService problemTextStructureCompilerService;
     private final ObjectMapper objectMapper;
 
     public AiResponseDTO generateTestCases(String problemDescription, List<String> base64Images, int count) {
@@ -83,6 +85,7 @@ public class AiIntegrationService {
 
         System.out.println("INFO: [AI Pipeline] Phase A2 - Gemini semantic IR extraction...");
         SemanticSpecDTO semanticSpec = resolveSemanticSpec(problemText, analysis, bypassCache);
+        problemTextStructureCompilerService.enrichMissingInputModel(semanticSpec, problemText);
         analysis.setSemanticSpec(semanticSpec);
         if (analysis.getInputModel() == null && semanticSpec.getInputModel() != null) {
             analysis.setInputModel(semanticSpec.getInputModel());
@@ -100,6 +103,7 @@ public class AiIntegrationService {
         System.out.println("INFO: [AI Pipeline] Phase B - artifact generation from frozen semantic IR...");
         AiResponseDTO dto = normalizeArtifacts(geminiTestGenerationService.generateTestArtifacts(analysis, semanticSpec, count));
         dto.setSemanticSpec(semanticSpec);
+        semanticArtifactCompilerService.compileMissingArtifacts(dto);
         installSystemGeneratorIfNeeded(dto, semanticGeneratorContext(analysis, semanticSpec));
 
         // Step 3: Backend Cross-Check (Brute vs Golden)
@@ -114,6 +118,7 @@ public class AiIntegrationService {
                  System.out.println("INFO: [AI Pipeline] Verification mismatch - attempting repair...");
                  dto = normalizeArtifacts(geminiTestGenerationService.repairFormalSpec(problemText, dto, "Brute vs Golden mismatch: " + report.message));
                  dto.setSemanticSpec(semanticSpec);
+                 semanticArtifactCompilerService.compileMissingArtifacts(dto);
                  installSystemGeneratorIfNeeded(dto, semanticGeneratorContext(analysis, semanticSpec));
                  report = verificationService.verifyBruteVsGolden(dto, 5);
                  dto.setVerificationReport(verificationService.reportToJson(report));
@@ -206,7 +211,10 @@ public class AiIntegrationService {
                                           AiResponseDTO brokenDto, String validationError) {
         String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
         String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint);
-        return normalizeArtifacts(geminiTestGenerationService.repairFormalSpec(problemText, brokenDto, validationError));
+        AiResponseDTO repaired = normalizeArtifacts(
+                geminiTestGenerationService.repairFormalSpec(problemText, brokenDto, validationError));
+        semanticArtifactCompilerService.compileMissingArtifacts(repaired);
+        return repaired;
     }
 
     public AiResponseDTO recoverReferenceArtifacts(String problemDescription, List<String> base64Images,

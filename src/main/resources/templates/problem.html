@@ -216,13 +216,19 @@
                             <div>
                                 <div class="text-xs text-slate-500 mb-1.5 uppercase tracking-wider font-bold">Dữ liệu vào</div>
                                 <div class="testcase-box text-sm text-slate-800 bg-slate-50 border border-slate-200 p-3 rounded-md">
-                                    <pre class="whitespace-pre-wrap" th:text="${tc.inputData}"></pre>
+                                    <pre class="whitespace-pre-wrap" th:text="${tc.inputPreview}"></pre>
+                                </div>
+                                <div th:if="${tc.inputPreviewTruncated}" class="mt-1 text-xs text-amber-700">
+                                    Chỉ hiển thị bản xem trước để tải trang nhanh hơn. Judge vẫn dùng đầy đủ file input.
                                 </div>
                             </div>
                             <div>
                                 <div class="text-xs text-slate-500 mb-1.5 uppercase tracking-wider font-bold">Dữ liệu ra</div>
                                 <div class="testcase-box text-sm text-slate-800 bg-slate-50 border border-slate-200 p-3 rounded-md">
-                                    <pre class="whitespace-pre-wrap" th:text="${tc.outputData}"></pre>
+                                    <pre class="whitespace-pre-wrap" th:text="${tc.outputPreview}"></pre>
+                                </div>
+                                <div th:if="${tc.outputPreviewTruncated}" class="mt-1 text-xs text-amber-700">
+                                    Chỉ hiển thị bản xem trước để tải trang nhanh hơn. Judge vẫn dùng đầy đủ file output.
                                 </div>
                             </div>
                         </div>

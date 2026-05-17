@@ -56,6 +56,19 @@
                     <p class="text-sm font-medium text-red-800" id="errorText"></p>
                 </div>
 
+                <div id="feedbackPanel" class="hidden bg-amber-50 border-l-4 border-amber-500 p-4 mb-5 rounded-r-md">
+                    <p class="text-sm font-semibold text-amber-900" id="feedbackSummary"></p>
+                    <p class="text-sm text-amber-800 mt-2" id="feedbackClarification"></p>
+                    <div class="mt-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">Đã làm được</p>
+                        <div id="feedbackCompleted" class="mt-2 flex flex-wrap gap-2"></div>
+                    </div>
+                    <div class="mt-3">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">Cần bổ sung</p>
+                        <div id="feedbackMissing" class="mt-2 flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+
                 <form id="generateForm" enctype="multipart/form-data">
                     <!-- Title -->
                     <div class="mb-5">
@@ -133,7 +146,7 @@
                 const jobId = data.jobId;
                 setStatus('AI đang phân tích bài toán và sinh test case...');
 
-                // Step 2: Poll until DONE / FAILED
+                // Step 2: Poll until DONE / NEEDS_INPUT / FAILED
                 await pollJob(jobId, status => setStatus(status));
 
             } catch (err) {
@@ -163,6 +176,11 @@
                             clearInterval(interval);
                             // result = problem ID for GENERATE jobs
                             window.location.href = '/problem/' + data.result;
+                        } else if (data.state === 'NEEDS_INPUT') {
+                            clearInterval(interval);
+                            hideOverlay();
+                            showFeedback(data.feedback);
+                            resolve();
                         } else if (data.state === 'FAILED') {
                             clearInterval(interval);
                             reject(new Error(data.error || 'Job thất bại.'));
@@ -200,10 +218,35 @@
         }
 
         function showError(msg) {
+            document.getElementById('feedbackPanel').classList.add('hidden');
             const banner = document.getElementById('errorBanner');
             document.getElementById('errorText').textContent = msg;
             banner.classList.remove('hidden');
             banner.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showFeedback(feedback) {
+            document.getElementById('errorBanner').classList.add('hidden');
+            const panel = document.getElementById('feedbackPanel');
+            document.getElementById('feedbackSummary').textContent =
+                feedback.summary || 'Hệ thống cần thêm thông tin trước khi tạo test case.';
+            document.getElementById('feedbackClarification').textContent =
+                feedback.clarification || 'Vui lòng bổ sung mô tả rõ hơn cho đề bài.';
+            renderFeedbackTags('feedbackCompleted', feedback.completedStages || []);
+            renderFeedbackTags('feedbackMissing', feedback.missingInformation || []);
+            panel.classList.remove('hidden');
+            panel.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function renderFeedbackTags(containerId, values) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            values.forEach(value => {
+                const tag = document.createElement('span');
+                tag.className = 'inline-flex items-center rounded bg-white/80 px-2.5 py-1 text-xs font-medium text-slate-700 border border-amber-200';
+                tag.textContent = value;
+                container.appendChild(tag);
+            });
         }
     </script>
 </body>

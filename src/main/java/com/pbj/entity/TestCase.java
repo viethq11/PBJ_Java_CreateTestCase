@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.io.BufferedReader;
+
 @Entity
 @Table(name = "testcases")
 @Data
@@ -84,6 +86,22 @@ public class TestCase {
         this.cachedOutput = data;
     }
 
+    public String getInputPreview() {
+        return readPreview(inputPath, legacyInput);
+    }
+
+    public String getOutputPreview() {
+        return readPreview(outputPath, legacyOutput);
+    }
+
+    public boolean isInputPreviewTruncated() {
+        return isPreviewTruncated(inputPath, legacyInput);
+    }
+
+    public boolean isOutputPreviewTruncated() {
+        return isPreviewTruncated(outputPath, legacyOutput);
+    }
+
     private static String readFile(String path) {
         try {
             return java.nio.file.Files.readString(java.nio.file.Path.of(path));
@@ -91,5 +109,46 @@ public class TestCase {
             // Log once, return empty
             return "Error reading file: " + e.getMessage();
         }
+    }
+
+    private static final int PREVIEW_MAX_CHARS = 8_000;
+
+    private static String readPreview(String path, String fallback) {
+        if (path == null || path.isBlank()) {
+            return previewText(fallback);
+        }
+
+        java.nio.file.Path file = java.nio.file.Path.of(path);
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = java.nio.file.Files.newBufferedReader(file)) {
+            int ch;
+            while ((ch = reader.read()) != -1) {
+                if (sb.length() >= PREVIEW_MAX_CHARS) {
+                    sb.append("\n... [truncated testcase preview]");
+                    break;
+                }
+                sb.append((char) ch);
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "Error reading file preview: " + e.getMessage();
+        }
+    }
+
+    private static String previewText(String value) {
+        if (value == null) return null;
+        if (value.length() <= PREVIEW_MAX_CHARS) return value;
+        return value.substring(0, PREVIEW_MAX_CHARS) + "\n... [truncated testcase preview]";
+    }
+
+    private static boolean isPreviewTruncated(String path, String fallback) {
+        try {
+            if (path != null && !path.isBlank()) {
+                return java.nio.file.Files.size(java.nio.file.Path.of(path)) > PREVIEW_MAX_CHARS;
+            }
+        } catch (Exception ignore) {
+            return false;
+        }
+        return fallback != null && fallback.length() > PREVIEW_MAX_CHARS;
     }
 }

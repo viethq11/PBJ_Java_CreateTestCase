@@ -28,6 +28,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -60,6 +61,8 @@ public class GeminiTestGenerationService {
 
     private volatile long lastSuccessfulPreflightAtMs;
     private static final long GEMINI_PREFLIGHT_TTL_MS = 5 * 60 * 1000L;
+    private static final long GEMINI_QUOTA_COOLDOWN_MS = 15 * 60 * 1000L;
+    private final Map<String, Long> quotaBlockedUntilByKey = new ConcurrentHashMap<>();
 
     public String extractProblemText(String hint, List<String> base64Images) {
         String prompt = """
@@ -99,6 +102,8 @@ public class GeminiTestGenerationService {
         );
         try {
             executeGeminiRequest(requestBody, "Gemini API key preflight");
+        } catch (GeminiQuotaExceededException e) {
+            throw e;
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "" : e.getMessage();
             if (message.contains("Chưa cấu hình Gemini API key")) {
@@ -123,8 +128,54 @@ public class GeminiTestGenerationService {
         try {
             return objectMapper.readValue(stripMarkdownFences(responseText), AiProblemAnalysisDTO.class);
         } catch (Exception e) {
+            String recovered = recoverTruncatedAnalysisJson(stripMarkdownFences(responseText));
+            if (recovered != null) {
+                try {
+                    System.err.println("WARN: Recovered truncated Gemini problem analysis JSON by dropping incomplete trailing field.");
+                    return objectMapper.readValue(recovered, AiProblemAnalysisDTO.class);
+                } catch (Exception ignored) {
+                    // Fall through to the original parse error.
+                }
+            }
             throw new RuntimeException("Failed to parse Gemini problem analysis response: " + e.getMessage(), e);
         }
+    }
+
+    String recoverTruncatedAnalysisJson(String json) {
+        if (json == null || json.isBlank()) return null;
+        int analysisSummaryKey = json.lastIndexOf("\"analysis_summary\"");
+        if (analysisSummaryKey < 0) return null;
+        int colon = json.indexOf(':', analysisSummaryKey);
+        if (colon < 0) return null;
+        int quote = json.indexOf('"', colon + 1);
+        if (quote < 0) return null;
+
+        String prefix = json.substring(0, analysisSummaryKey).trim();
+        if (prefix.endsWith(",")) {
+            prefix = prefix.substring(0, prefix.length() - 1).trim();
+        }
+        if (!prefix.startsWith("{")) return null;
+
+        int openObjects = 0;
+        int openArrays = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = 0; i < prefix.length(); i++) {
+            char ch = prefix.charAt(i);
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (ch == '\\') escaped = true;
+                else if (ch == '"') inString = false;
+                continue;
+            }
+            if (ch == '"') inString = true;
+            else if (ch == '{') openObjects++;
+            else if (ch == '}') openObjects--;
+            else if (ch == '[') openArrays++;
+            else if (ch == ']') openArrays--;
+        }
+        if (inString || openObjects < 1 || openArrays != 0) return null;
+        return prefix + "}";
     }
 
     public SemanticSpecDTO extractSemanticSpec(String problemText, AiProblemAnalysisDTO analysis) {
@@ -235,6 +286,8 @@ public class GeminiTestGenerationService {
 
             String responseText = executeGeminiRequest(requestBody, "Gemini (Formal Spec Repair)");
             return parseAnalysisResponse(responseText);
+        } catch (GeminiQuotaExceededException e) {
+            throw e;
         } catch (Exception e) {
             throw new IllegalStateException("Failed to repair formal spec: " + e.getMessage(), e);
         }
@@ -708,7 +761,8 @@ public class GeminiTestGenerationService {
 
             JsonNode bugClassesNode = root.path("bug_classes");
             if (bugClassesNode.isArray()) {
-                dto.setBugClasses(objectMapper.readerForListOf(AiResponseDTO.BugClass.class).readValue(bugClassesNode));
+                dto.setBugClasses(objectMapper.readerForListOf(AiResponseDTO.BugClass.class)
+                        .readValue(normalizeBugClassesNode(bugClassesNode)));
             }
 
             JsonNode wrongSolutionsNode = root.path("wrong_solutions");
@@ -768,11 +822,58 @@ public class GeminiTestGenerationService {
             }
             return dto;
         } catch (Exception e) {
+            String recovered = recoverTruncatedTopLevelObjectJson(cleanedText);
+            if (recovered != null) {
+                try {
+                    System.err.println("WARN: Recovered truncated Gemini artifact JSON by dropping incomplete trailing field.");
+                    return parseAnalysisResponse(recovered);
+                } catch (Exception ignored) {
+                    // Fall through to original parse error.
+                }
+            }
             System.err.println("\n=== RAW GEMINI RESPONSE (FOR DEBUGGING) ===");
             System.err.println(cleanedText);
             System.err.println("==========================================\n");
             throw new RuntimeException("Failed to parse Gemini test generation response: " + e.getMessage(), e);
         }
+    }
+
+    String recoverTruncatedTopLevelObjectJson(String json) {
+        if (json == null || json.isBlank() || !json.trim().startsWith("{")) return null;
+
+        int objectDepth = 0;
+        int arrayDepth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        int lastCompleteTopLevelComma = -1;
+
+        for (int i = 0; i < json.length(); i++) {
+            char ch = json.charAt(i);
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (ch == '\\') escaped = true;
+                else if (ch == '"') inString = false;
+                continue;
+            }
+
+            if (ch == '"') {
+                inString = true;
+            } else if (ch == '{') {
+                objectDepth++;
+            } else if (ch == '}') {
+                objectDepth--;
+            } else if (ch == '[') {
+                arrayDepth++;
+            } else if (ch == ']') {
+                arrayDepth--;
+            } else if (ch == ',' && objectDepth == 1 && arrayDepth == 0) {
+                lastCompleteTopLevelComma = i;
+            }
+        }
+
+        if (lastCompleteTopLevelComma < 0 || objectDepth < 1) return null;
+        String prefix = json.substring(0, lastCompleteTopLevelComma).trim();
+        return prefix + "}";
     }
 
     private JsonNode readJsonWithContext(String jsonText) throws JsonProcessingException {
@@ -799,6 +900,15 @@ public class GeminiTestGenerationService {
 
     public JsonNode normalizeInputSchema(JsonNode schema) {
         if (schema == null || schema.isMissingNode() || schema.isNull()) return schema;
+        if (schema.isArray()) {
+            for (JsonNode candidate : schema) {
+                if (candidate != null && candidate.isObject()) {
+                    return normalizeInputSchema(candidate);
+                }
+            }
+            return objectMapper.createObjectNode();
+        }
+        if (!schema.isObject()) return objectMapper.createObjectNode();
         ObjectNode normalized = schema.deepCopy();
         JsonNode lines = normalized.path("lines");
         if (!lines.isArray()) return normalized;
@@ -826,6 +936,26 @@ public class GeminiTestGenerationService {
             }
         }
         return objectMapper.createObjectNode();
+    }
+
+    private JsonNode normalizeBugClassesNode(JsonNode bugClassesNode) {
+        if (!bugClassesNode.isArray()) return bugClassesNode;
+        ArrayNode normalized = objectMapper.createArrayNode();
+        for (JsonNode bugClass : bugClassesNode) {
+            if (!bugClass.isObject()) {
+                normalized.add(bugClass);
+                continue;
+            }
+            ObjectNode copy = bugClass.deepCopy();
+            JsonNode strategy = copy.path("counterexample_strategy");
+            if (strategy.isTextual()) {
+                ArrayNode wrapped = objectMapper.createArrayNode();
+                wrapped.add(strategy.asText(""));
+                copy.set("counterexample_strategy", wrapped);
+            }
+            normalized.add(copy);
+        }
+        return normalized;
     }
 
     private void appendNormalizedLine(ArrayNode target, JsonNode line) {
@@ -987,9 +1117,20 @@ public class GeminiTestGenerationService {
         long[] retryDelaysMs = {3000L, 5000L, 10000L, 20000L};
         int maxRetries = retryDelaysMs.length + 1;
         RuntimeException lastFailure = null;
+        boolean sawConfiguredKey = false;
 
         for (String apiKey : resolveGeminiApiKeys()) {
+            sawConfiguredKey = true;
             String keyLabel = maskKey(apiKey);
+            long blockedUntil = quotaBlockedUntil(apiKey);
+            if (blockedUntil > System.currentTimeMillis()) {
+                long waitSeconds = Math.max(1L, (blockedUntil - System.currentTimeMillis()) / 1000L);
+                lastFailure = new GeminiQuotaExceededException(errorPrefix + " key " + keyLabel
+                        + " đang bị tạm chặn do quota Gemini. Thử lại sau khoảng " + waitSeconds + " giây.");
+                System.err.println("WARN: " + errorPrefix + " key " + keyLabel
+                        + " skipped because quota cooldown is active for ~" + waitSeconds + " seconds.");
+                continue;
+            }
 
             for (int attempt = 1; attempt <= maxRetries; attempt++) {
                 try {
@@ -1011,11 +1152,12 @@ public class GeminiTestGenerationService {
                             + " failed with HTTP " + e.getStatusCode() + ": " + responseBody);
 
                     if (isHardQuotaExceeded(responseBody)) {
-                        lastFailure = new RuntimeException(errorPrefix + " key " + keyLabel
+                        blockQuotaKey(apiKey);
+                        lastFailure = new GeminiQuotaExceededException(errorPrefix + " key " + keyLabel
                                 + " đã hết quota Gemini. HTTP " + e.getStatusCode()
                                 + (responseBody.isBlank() ? "" : " - " + responseBody), e);
                         System.err.println("WARN: " + errorPrefix + " key " + keyLabel
-                                + " quota exhausted; trying next Gemini key if available.");
+                                + " quota exhausted; key is blocked for cooldown and the next key will be tried if available.");
                         break;
                     }
 
@@ -1023,6 +1165,13 @@ public class GeminiTestGenerationService {
                             + e.getStatusCode() + (responseBody.isBlank() ? "" : " - " + responseBody), e);
 
                     if (attempt == maxRetries) {
+                        if (e instanceof HttpClientErrorException.TooManyRequests) {
+                            blockQuotaKey(apiKey);
+                            lastFailure = new GeminiQuotaExceededException(errorPrefix + " key " + keyLabel
+                                    + " bị rate limit Gemini sau " + maxRetries + " lần thử. HTTP "
+                                    + e.getStatusCode()
+                                    + (responseBody.isBlank() ? "" : " - " + responseBody), e);
+                        }
                         System.err.println("WARN: " + errorPrefix + " key " + keyLabel
                                 + " exhausted retry attempts; trying next Gemini key if available.");
                         break;
@@ -1042,6 +1191,12 @@ public class GeminiTestGenerationService {
             }
         }
 
+        if (!sawConfiguredKey) {
+            throw new IllegalStateException("Chưa cấu hình Gemini API key. Hãy đặt GEMINI_API_KEY hoặc GEMINI_API_KEYS.");
+        }
+        if (lastFailure instanceof GeminiQuotaExceededException) {
+            throw new GeminiQuotaExceededException(buildGeminiFailureMessage(errorPrefix, lastFailure), lastFailure);
+        }
         throw new RuntimeException(buildGeminiFailureMessage(errorPrefix, lastFailure), lastFailure);
     }
 
@@ -1058,7 +1213,8 @@ public class GeminiTestGenerationService {
 
         if (lower.contains("quota") || lower.contains("resource_exhausted") || lower.contains("429")) {
             return errorPrefix + " thất bại vì quota/rate limit của Gemini. "
-                    + "Hãy kiểm tra đúng project/model đang dùng hoặc thêm key khác vào GEMINI_API_KEYS.";
+                    + "Hệ thống đã tạm chặn key bị quota để tránh spam request. "
+                    + "Hãy chờ cooldown, kiểm tra billing/quota của project, đổi model, hoặc thêm key khác vào GEMINI_API_KEYS.";
         }
         if (lower.contains("api key not valid")
                 || lower.contains("permission_denied")
@@ -1098,6 +1254,20 @@ public class GeminiTestGenerationService {
     private String maskKey(String apiKey) {
         if (apiKey == null || apiKey.length() <= 8) return "****";
         return apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length() - 4);
+    }
+
+    private void blockQuotaKey(String apiKey) {
+        quotaBlockedUntilByKey.put(apiKey, System.currentTimeMillis() + GEMINI_QUOTA_COOLDOWN_MS);
+    }
+
+    long quotaBlockedUntil(String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) return 0L;
+        long blockedUntil = quotaBlockedUntilByKey.getOrDefault(apiKey, 0L);
+        if (blockedUntil <= System.currentTimeMillis()) {
+            quotaBlockedUntilByKey.remove(apiKey);
+            return 0L;
+        }
+        return blockedUntil;
     }
 
     private RestTemplate buildRestTemplate() {
@@ -1227,7 +1397,7 @@ public class GeminiTestGenerationService {
                     ]
                   },
                   "risk_tags": ["overflow", "tle_risk", "precision", "complex_input"],
-                  "analysis_summary": "detailed internal logic"
+                  "analysis_summary": "one concise sentence, at most 180 characters"
                 }
                 """.formatted(problemText);
     }

@@ -1,5 +1,7 @@
 package com.pbj.service;
 
+import com.pbj.dto.GenerationFeedbackDTO;
+
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -10,13 +12,14 @@ import java.util.UUID;
 @Service
 public class JobQueueService {
 
-    public enum JobState { PENDING, RUNNING, DONE, FAILED }
+    public enum JobState { PENDING, RUNNING, NEEDS_INPUT, DONE, FAILED }
 
     public static class JobStatus {
         public String id;
         public JobState state;
         public Object result; // For runCode it's SubmissionResult, for regenerate it's "success"
         public String error;
+        public GenerationFeedbackDTO feedback;
         public String type; // "RUN" or "REGENERATE"
         public Instant createdAt;
         public Instant startedAt;
@@ -68,6 +71,15 @@ public class JobQueueService {
         if (job != null) {
             job.state = JobState.FAILED;
             job.error = error;
+            job.finishedAt = Instant.now();
+        }
+    }
+
+    public void requestInput(String id, GenerationFeedbackDTO feedback) {
+        JobStatus job = jobs.get(id);
+        if (job != null) {
+            job.state = JobState.NEEDS_INPUT;
+            job.feedback = feedback;
             job.finishedAt = Instant.now();
         }
     }

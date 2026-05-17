@@ -50,6 +50,20 @@ class SemanticSpecValidationServiceTest {
     }
 
     @Test
+    void acceptsCommandQueryVariablesWithoutRelationalConditions() {
+        SemanticSpecDTO spec = new SemanticSpecDTO();
+        spec.setQueryVariables(List.of("x1", "y1", "z1", "x2", "y2", "z2"));
+        spec.setIgnoredVariables(List.of());
+        spec.setPaths(List.of());
+        spec.setConditions(List.of());
+        spec.setGraphType("multi_test_command_based");
+        spec.setCountedObjects(List.of());
+        spec.setOutputSemantics("sum for each query");
+
+        service.validate(spec);
+    }
+
+    @Test
     void rejectsRelationalSpecWithoutConditions() {
         SemanticSpecDTO spec = connectopolisSpec();
         spec.setConditions(List.of());

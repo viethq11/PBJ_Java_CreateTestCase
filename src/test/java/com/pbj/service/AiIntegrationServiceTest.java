@@ -94,6 +94,8 @@ class AiIntegrationServiceTest {
                 new SemanticSpecValidationService(),
                 new OcrCleanerService(),
                 new TestProfileNormalizationService(),
+                new SemanticArtifactCompilerService(new ObjectMapper()),
+                new ProblemTextStructureCompilerService(new ObjectMapper()),
                 new ObjectMapper()
         );
 
@@ -149,6 +151,8 @@ class AiIntegrationServiceTest {
                 new SemanticSpecValidationService(),
                 new OcrCleanerService(),
                 new TestProfileNormalizationService(),
+                new SemanticArtifactCompilerService(new ObjectMapper()),
+                new ProblemTextStructureCompilerService(new ObjectMapper()),
                 new ObjectMapper()
         );
 

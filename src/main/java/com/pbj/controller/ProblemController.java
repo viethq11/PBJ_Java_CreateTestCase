@@ -149,7 +149,8 @@ public class ProblemController {
                 "type",   job.type,
                 "elapsedSeconds", job.elapsedSeconds(),
                 "result", job.result  != null ? job.result  : "",
-                "error",  job.error   != null ? job.error   : ""
+                "error",  job.error   != null ? job.error   : "",
+                "feedback", job.feedback != null ? job.feedback : ""
         ));
     }
 

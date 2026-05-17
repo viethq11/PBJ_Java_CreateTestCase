@@ -158,6 +158,64 @@ class ProblemServiceQualityTest {
         assertThat(resolved).isEqualTo(problem.getAcceptedSolutionCode());
     }
 
+    @Test
+    void formalSpecFailureBecomesActionableNeedsInputFeedback() {
+        GenerationNeedsInputException ex = service.needsInputForFormalSpec(
+                new IllegalStateException("Formal spec validation failed"));
+
+        assertThat(ex.getFeedback().getStage()).isEqualTo("formal_spec");
+        assertThat(ex.getFeedback().getCompletedStages()).contains("Trích xuất ngữ nghĩa");
+        assertThat(ex.getFeedback().getMissingInformation()).contains("Định dạng input đầy đủ");
+    }
+
+    @Test
+    void groundingFailureBecomesActionableNeedsInputFeedback() {
+        GenerationNeedsInputException ex = service.needsInputForGrounding(
+                new IllegalStateException("Formal spec grounding failed"));
+
+        assertThat(ex.getFeedback().getStage()).isEqualTo("source_grounding");
+        assertThat(ex.getFeedback().getClarification()).contains("OCR");
+        assertThat(ex.getFeedback().getMissingInformation()).contains("Ví dụ input/output hoặc mô tả truy vấn");
+    }
+
+    @Test
+    void missingCompilerArtifactsAreClassifiedAsInternalWorkNotUserInput() {
+        GenerationNeedsInputException ex = service.needsInternalCompilerRepair(
+                new IllegalStateException("test_plan is missing. input_schema is missing."));
+
+        assertThat(ex.getFeedback().getStage()).isEqualTo("artifact_compilation");
+        assertThat(ex.getFeedback().getSummary()).contains("đã đọc đủ đề");
+        assertThat(ex.getFeedback().getClarification()).contains("người dùng không cần nhập lại đề");
+    }
+
+    @Test
+    void geminiQuotaFailureBecomesActionableRecoveryFeedback() {
+        GenerationNeedsInputException ex = service.needsGeminiQuotaRecovery(
+                new GeminiQuotaExceededException("HTTP 429 RESOURCE_EXHAUSTED"));
+
+        assertThat(ex.getFeedback().getStage()).isEqualTo("gemini_quota");
+        assertThat(ex.getFeedback().getSummary()).contains("tránh spam request");
+        assertThat(ex.getFeedback().getClarification()).contains("GEMINI_API_KEYS");
+        assertThat(ex.getFeedback().getMissingInformation()).contains("Quota Gemini khả dụng");
+    }
+
+    @Test
+    void cppValidatorIsNotAcceptedAsRunnablePythonValidator() throws Exception {
+        Method method = ProblemService.class.getDeclaredMethod("isUsablePythonValidator", String.class);
+        method.setAccessible(true);
+
+        assertThat((boolean) method.invoke(service, """
+                #include <bits/stdc++.h>
+                using namespace std;
+                int main(){ return 0; }
+                """)).isFalse();
+        assertThat((boolean) method.invoke(service, """
+                import sys
+                def validate():
+                    return sys.stdin.read()
+                """)).isTrue();
+    }
+
     private AiResponseDTO.ExecutableWrongSolution probe(String name, String type) {
         AiResponseDTO.ExecutableWrongSolution probe = new AiResponseDTO.ExecutableWrongSolution();
         probe.setName(name);

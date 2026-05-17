@@ -1,6 +1,7 @@
 package com.pbj.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbj.dto.AiResponseDTO;
 import org.junit.jupiter.api.Test;
 
@@ -94,6 +95,18 @@ class GeminiTestGenerationServiceTest {
         assertThat(generic).contains("thất bại trước khi xác nhận quota Gemini");
         assertThat(generic).doesNotContain("thất bại vì quota/rate limit");
         assertThat(quota).contains("thất bại vì quota/rate limit của Gemini");
+    }
+
+    @Test
+    void quotaCooldownBlocksKeyAfterQuotaFailure() throws Exception {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        Method blockMethod = GeminiTestGenerationService.class.getDeclaredMethod("blockQuotaKey", String.class);
+        blockMethod.setAccessible(true);
+
+        blockMethod.invoke(service, "AIza-test-key");
+
+        assertThat(service.quotaBlockedUntil("AIza-test-key")).isGreaterThan(System.currentTimeMillis());
+        assertThat(service.quotaBlockedUntil("other-key")).isZero();
     }
 
     @Test
@@ -264,6 +277,56 @@ class GeminiTestGenerationServiceTest {
     }
 
     @Test
+    void parserWrapsSingleBugClassCounterexampleStrategyIntoList() throws Exception {
+        String response = """
+                {
+                  "formatted_description": "Mo ta",
+                  "input_format": "Input",
+                  "output_format": "Output",
+                  "constraints": "- 1 <= N <= 10",
+                  "bug_classes": [
+                    {
+                      "name": "overflow",
+                      "risk": "int32",
+                      "target_variables": ["sum"],
+                      "required_tests": ["large"],
+                      "counterexample_strategy": "Generate large values"
+                    }
+                  ]
+                }
+                """;
+
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        Method method = GeminiTestGenerationService.class.getDeclaredMethod("parseAnalysisResponse", String.class);
+        method.setAccessible(true);
+
+        AiResponseDTO dto = (AiResponseDTO) method.invoke(service, response);
+
+        assertThat(dto.getBugClasses()).hasSize(1);
+        assertThat(dto.getBugClasses().get(0).getCounterexampleStrategy()).containsExactly("Generate large values");
+    }
+
+    @Test
+    void normalizesArrayWrappedInputSchemaIntoSingleSchema() throws Exception {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        JsonNode schema = new ObjectMapper().readTree("""
+                [
+                  {
+                    "multiple_test_cases": false,
+                    "lines": [
+                      {"kind": "scalars", "fields": [{"name": "n", "type": "int", "min": 1, "max": 10}]}
+                    ]
+                  }
+                ]
+                """);
+
+        JsonNode normalized = service.normalizeInputSchema(schema);
+
+        assertThat(normalized.isObject()).isTrue();
+        assertThat(normalized.path("lines")).hasSize(1);
+    }
+
+    @Test
     void parserNormalizesTupleLineIntoQueriesSchema() throws Exception {
         String response = """
                 {
@@ -354,5 +417,64 @@ class GeminiTestGenerationServiceTest {
         assertThat(normalized).contains("$1 \\le a_i \\le 10^9$");
         assertThat(normalized).contains("$a_j$");
         assertThat(normalized).contains("$10^5$");
+    }
+
+    @Test
+    void recoversProblemAnalysisWhenOnlyTrailingSummaryWasTruncated() {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        String recovered = service.recoverTruncatedAnalysisJson("""
+                {
+                  "problem_type": "game",
+                  "algorithm_family": "combinatorial_game",
+                  "input_pattern": "multi_test_array",
+                  "constraints": "sum N <= 1e6",
+                  "risk_tags": ["parity"],
+                  "analysis_summary": "This sentence was cut before Gemini finished
+                """);
+
+        assertThat(recovered).isEqualTo("""
+                {
+                  "problem_type": "game",
+                  "algorithm_family": "combinatorial_game",
+                  "input_pattern": "multi_test_array",
+                  "constraints": "sum N <= 1e6",
+                  "risk_tags": ["parity"]}
+                """.trim());
+    }
+
+    @Test
+    void recoversArtifactJsonByDroppingIncompleteTrailingField() {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        String recovered = service.recoverTruncatedTopLevelObjectJson("""
+                {
+                  "formatted_description": "ok",
+                  "input_format": "in",
+                  "output_format": "out",
+                  "generator_code": "int main(){}",
+                  "golden_solution": "int main(){return 0;}",
+                  "wrong_solutions": [
+                    {
+                      "name": "partial"
+                """);
+
+        assertThat(recovered).isEqualTo("""
+                {
+                  "formatted_description": "ok",
+                  "input_format": "in",
+                  "output_format": "out",
+                  "generator_code": "int main(){}",
+                  "golden_solution": "int main(){return 0;}"}
+                """.trim());
+    }
+
+    @Test
+    void analysisPromptKeepsSummaryShort() throws Exception {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        Method method = GeminiTestGenerationService.class.getDeclaredMethod("buildAnalysisPrompt", String.class);
+        method.setAccessible(true);
+
+        String prompt = (String) method.invoke(service, "problem");
+
+        assertThat(prompt).contains("analysis_summary\": \"one concise sentence, at most 180 characters\"");
     }
 }

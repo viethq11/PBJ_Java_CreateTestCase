@@ -2,6 +2,7 @@ package com.pbj.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbj.dto.AiResponseDTO;
+import com.pbj.dto.GenerationFeedbackDTO;
 import com.pbj.dto.SemanticSpecDTO;
 import com.pbj.entity.Problem;
 import com.pbj.entity.TestCase;
@@ -159,6 +160,10 @@ public class ProblemService {
         try {
             Problem p = generateAndSaveProblemFromBase64(title, description, base64Images, bypassCache);
             jobQueueService.completeJob(jobId, p.getId());
+        } catch (GenerationNeedsInputException e) {
+            jobQueueService.requestInput(jobId, e.getFeedback());
+        } catch (GeminiQuotaExceededException e) {
+            jobQueueService.requestInput(jobId, needsGeminiQuotaRecovery(e).getFeedback());
         } catch (Exception e) {
             jobQueueService.failJob(jobId, e.getMessage());
         }
@@ -230,7 +235,7 @@ public class ProblemService {
         Problem p = null;
 
         try {
-            AiResponseDTO dto = prepareGenerationDto(description, base64Images, bypassCache);
+            AiResponseDTO dto = prepareGenerationDto(title, description, base64Images, bypassCache);
             p = saveProblemMetadata(null, title, description, dto);
             completeTestGeneration(p, dto, description, base64Images, bypassCache);
             return p;
@@ -253,6 +258,15 @@ public class ProblemService {
                 String guidance = e.likelySchemaMismatch()
                         ? " Please add or correct the textual Input/Output/Constraints; the OCR/image-derived input_schema appears inconsistent with generated inputs."
                         : " The generated AC reference solution could not compile/run on valid generated inputs even after a fresh retry.";
+                if (e.likelySchemaMismatch()) {
+                    throw new GenerationNeedsInputException(new GenerationFeedbackDTO(
+                            "testcase_validation",
+                            "Hệ thống đã hiểu bài toán ở mức khái quát, nhưng dữ liệu sinh ra chưa khớp ổn định với định dạng input.",
+                            "Vui lòng nhập lại bằng chữ phần Input/Output/Constraints thay vì chỉ dùng ảnh, để hệ thống chốt chính xác cấu trúc test case.",
+                            List.of("Đọc đề", "Trích xuất ngữ nghĩa", "Phân loại bài toán", "Dựng cấu trúc test"),
+                            List.of("Mô tả input bằng chữ", "Mô tả output bằng chữ", "Giới hạn chính")
+                    ), e);
+                }
                 throw new IllegalStateException(e.getMessage() + guidance, e);
             }
             throw e;
@@ -272,22 +286,23 @@ public class ProblemService {
 
     private Problem retryProblemGenerationWithFreshArtifacts(Problem existingProblem, String title,
                                                             String description, List<String> base64Images) {
-        AiResponseDTO dto = prepareGenerationDto(description, base64Images, true);
+        AiResponseDTO dto = prepareGenerationDto(title, description, base64Images, true);
         Problem problem = saveProblemMetadata(existingProblem, title, description, dto);
         completeTestGeneration(problem, dto, description, base64Images, true);
         return problem;
     }
 
-    private AiResponseDTO prepareGenerationDto(String description, List<String> base64Images, boolean bypassCache) {
-        if (looksLikeGameWithCows(description, null)) {
+    private AiResponseDTO prepareGenerationDto(String title, String description, List<String> base64Images, boolean bypassCache) {
+        String sourceHint = (title == null ? "" : title) + "\n" + (description == null ? "" : description);
+        if (looksLikeGameWithCows(sourceHint, null)) {
             AiResponseDTO dto = localGameWithCowsDto();
-            ensureLocalArtifacts(dto, description);
+            ensureLocalArtifacts(dto, sourceHint);
             dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
             return dto;
         }
-        if (looksLikeConnectopolis(description, null)) {
+        if (looksLikeConnectopolis(sourceHint, null)) {
             AiResponseDTO dto = localConnectopolisDto();
-            ensureLocalArtifacts(dto, description);
+            ensureLocalArtifacts(dto, sourceHint);
             dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
             return dto;
         }
@@ -303,10 +318,66 @@ public class ProblemService {
             dto = aiIntegrationService.repairFormalSpec(description, base64Images, dto, ex.getMessage());
             ensureLocalArtifacts(dto, description);
             dto.setValidatorCode(sanitizeValidatorCode(dto.getValidatorCode()));
-            formalSpecValidationService.validateForGeneration(dto);
+            try {
+                formalSpecValidationService.validateForGeneration(dto);
+            } catch (IllegalStateException repairedEx) {
+                if (looksLikeMissingCompilerArtifacts(repairedEx)) {
+                    throw needsInternalCompilerRepair(repairedEx);
+                }
+                throw needsInputForFormalSpec(repairedEx);
+            }
         }
-        formalSpecValidationService.validateAgainstSource(description, dto);
+        try {
+            formalSpecValidationService.validateAgainstSource(description, dto);
+        } catch (IllegalStateException ex) {
+            throw needsInputForGrounding(ex);
+        }
         return dto;
+    }
+
+    GenerationNeedsInputException needsInputForFormalSpec(IllegalStateException cause) {
+        return new GenerationNeedsInputException(new GenerationFeedbackDTO(
+                "formal_spec",
+                "Hệ thống đã đọc đề nhưng chưa đủ chắc về cấu trúc vào/ra để tạo test case đáng tin.",
+                "Vui lòng bổ sung rõ phần Input, Output và Constraints bằng văn bản, nhất là số lượng dòng, ý nghĩa từng biến và giới hạn của chúng.",
+                List.of("Đọc đề", "Trích xuất ngữ nghĩa", "Phân loại bài toán"),
+                List.of("Định dạng input đầy đủ", "Định dạng output", "Giới hạn biến")
+        ), cause);
+    }
+
+    GenerationNeedsInputException needsInputForGrounding(IllegalStateException cause) {
+        return new GenerationNeedsInputException(new GenerationFeedbackDTO(
+                "source_grounding",
+                "Hệ thống đã tạo được bản nháp kỹ thuật, nhưng bản nháp đó chưa khớp đủ chắc với đề gốc.",
+                "Vui lòng thêm mô tả chữ cho các phần dễ bị OCR sai hoặc mơ hồ, ví dụ tên lệnh, các biến trong truy vấn, và một ví dụ input/output nếu có.",
+                List.of("Đọc đề", "Trích xuất ngữ nghĩa", "Phân loại bài toán", "Dựng bản nháp cấu trúc"),
+                List.of("Các chi tiết dễ nhầm trong đề gốc", "Ví dụ input/output hoặc mô tả truy vấn")
+        ), cause);
+    }
+
+    private boolean looksLikeMissingCompilerArtifacts(IllegalStateException cause) {
+        String message = cause == null || cause.getMessage() == null ? "" : cause.getMessage().toLowerCase(Locale.ROOT);
+        return message.contains("test_plan is missing") || message.contains("input_schema is missing");
+    }
+
+    GenerationNeedsInputException needsInternalCompilerRepair(IllegalStateException cause) {
+        return new GenerationNeedsInputException(new GenerationFeedbackDTO(
+                "artifact_compilation",
+                "Hệ thống đã đọc đủ đề, nhưng chưa biên dịch xong cấu trúc kỹ thuật cần để sinh test case.",
+                "Đây là phần hệ thống cần tự xử lý tiếp; người dùng không cần nhập lại đề chỉ vì artifact nội bộ còn thiếu.",
+                List.of("Đọc đề", "Trích xuất ngữ nghĩa", "Phân loại bài toán"),
+                List.of("Biên dịch input_schema", "Biên dịch test_plan")
+        ), cause);
+    }
+
+    GenerationNeedsInputException needsGeminiQuotaRecovery(GeminiQuotaExceededException cause) {
+        return new GenerationNeedsInputException(new GenerationFeedbackDTO(
+                "gemini_quota",
+                "Gemini đang hết quota hoặc bị rate limit, nên hệ thống đã tạm dừng để tránh spam request.",
+                "Hãy chờ quota/cooldown hồi lại, kiểm tra billing và quota của Google AI Studio, đổi model nhẹ hơn, hoặc thêm key khác vào GEMINI_API_KEYS rồi chạy lại.",
+                List.of("Phát hiện quota/rate limit", "Tạm chặn key lỗi để tránh gọi lặp vô ích"),
+                List.of("Quota Gemini khả dụng", "API key/model hợp lệ", "Chạy lại job sau khi khắc phục")
+        ), cause);
     }
 
     private AiResponseDTO localGameWithCowsDto() {
@@ -350,6 +421,14 @@ public class ProblemService {
         AiResponseDTO.TestPlan plan = new AiResponseDTO.TestPlan();
         plan.setProblemType("max_welter_game");
         plan.setIntendedSolution("Sort stall positions. RR wins exactly on terminal/P-positions where the two rightmost occupied stalls are consecutive and the parity condition holds.");
+        AiResponseDTO.TestFamily family = new AiResponseDTO.TestFamily();
+        family.setName("max_welter_position_coverage");
+        family.setDifficulty("small_to_large");
+        family.setTarget(List.of("terminal positions", "two-rightmost consecutive positions", "parity mistakes", "large sparse stalls"));
+        family.setConstraints("Mix small exhaustive cases with large N and stall values up to 1e9.");
+        family.setExpected("Each generated case is valid and cross-checked by the local reference solution.");
+        family.setReason("Covers the local Max-Welter characterization used by accepted solutions.");
+        plan.setTestFamilies(List.of(family));
         dto.setTestPlan(plan);
         return dto;
     }
@@ -501,7 +580,7 @@ public class ProblemService {
         // Delete all disk files + DB rows
         testCaseStorageService.deleteAllForProblem(problemId);
 
-        AiResponseDTO dto = prepareGenerationDto(problem.getDescription(), new ArrayList<>(), false);
+        AiResponseDTO dto = prepareGenerationDto(problem.getTitle(), problem.getDescription(), new ArrayList<>(), false);
 
         if (dto.getConstraints() != null && !dto.getConstraints().isBlank()) {
             updateProblemMetadata(problem, dto);
@@ -1003,10 +1082,24 @@ public class ProblemService {
             dto.setGeneratorLanguage("cpp");
             System.out.println("INFO: Installed local Connectopolis artifacts.");
         }
-        if (dto.getValidatorCode() == null || dto.getValidatorCode().isBlank()) {
+        if (!isUsablePythonValidator(dto.getValidatorCode())) {
             dto.setValidatorCode(localValidatorBuilderService.buildFromInputSchema(dto.getInputSchema()));
             System.out.println("INFO: Built validator_code locally from input_schema.");
         }
+    }
+
+    private boolean isUsablePythonValidator(String validatorCode) {
+        if (validatorCode == null || validatorCode.isBlank()) return false;
+        String lower = validatorCode.toLowerCase(Locale.ROOT);
+        if (lower.contains("#include")
+                || lower.contains("std::")
+                || lower.contains("int main(")
+                || lower.contains("using namespace std")) {
+            return false;
+        }
+        return lower.contains("import ")
+                || lower.contains("def ")
+                || lower.contains("sys.stdin");
     }
 
     private boolean looksLikeGameWithCows(String sourceStatement, AiResponseDTO dto) {

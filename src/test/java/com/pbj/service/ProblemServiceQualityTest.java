@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ProblemServiceQualityTest {
 
     private final ProblemService service = new ProblemService(
-            null, null, null, null, null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null, null, null, null);
 
     @Test
     void coverageGateReportCollectsKeySignalsWithoutScoring() {

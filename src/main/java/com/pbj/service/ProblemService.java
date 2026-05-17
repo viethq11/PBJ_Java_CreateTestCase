@@ -8,6 +8,7 @@ import com.pbj.entity.Problem;
 import com.pbj.entity.TestCase;
 import com.pbj.repository.ProblemRepository;
 import com.pbj.repository.TestCaseRepository;
+import com.pbj.v2.generation.V2ProblemGenerationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -46,6 +47,7 @@ public class ProblemService {
     private final FormalSpecValidationService formalSpecValidationService;
     private final AdversarialTestSynthesisService adversarialTestSynthesisService;
     private final LocalValidatorBuilderService localValidatorBuilderService;
+    private final V2ProblemGenerationService v2ProblemGenerationService;
     @Qualifier("judgeTaskExecutor")
     private final Executor judgeTaskExecutor;
     private final ObjectMapper objectMapper;
@@ -232,6 +234,11 @@ public class ProblemService {
 
     @Transactional
     public Problem generateAndSaveProblemFromBase64(String title, String description, List<String> base64Images, boolean bypassCache) {
+        return v2ProblemGenerationService.generate(title, description, base64Images);
+    }
+
+    @Transactional
+    public Problem generateAndSaveProblemFromBase64Legacy(String title, String description, List<String> base64Images, boolean bypassCache) {
         Problem p = null;
 
         try {

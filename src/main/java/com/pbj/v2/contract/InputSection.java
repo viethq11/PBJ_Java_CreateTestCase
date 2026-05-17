@@ -5,6 +5,8 @@ import java.util.List;
 public record InputSection(Kind kind, List<ScalarField> fields, String repeatField, List<CommandVariant> variants) {
     public enum Kind {
         SCALARS,
+        ARRAY,
+        ROWS,
         COMMANDS
     }
 
@@ -14,6 +16,14 @@ public record InputSection(Kind kind, List<ScalarField> fields, String repeatFie
 
     public static InputSection commands(String repeatField, List<CommandVariant> variants) {
         return new InputSection(Kind.COMMANDS, List.of(), repeatField, variants);
+    }
+
+    public static InputSection array(String repeatField, ScalarField field) {
+        return new InputSection(Kind.ARRAY, List.of(field), repeatField, List.of());
+    }
+
+    public static InputSection rows(String repeatField, List<ScalarField> fields) {
+        return new InputSection(Kind.ROWS, fields, repeatField, List.of());
     }
 
     public InputSection {

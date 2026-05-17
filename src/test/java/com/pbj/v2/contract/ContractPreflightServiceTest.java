@@ -39,4 +39,36 @@ class ContractPreflightServiceTest {
                 .isInstanceOf(ContractViolationException.class)
                 .hasMessageContaining("m is not an integer");
     }
+
+    @Test
+    void arrayContractRoundTripsGeneratedRows() {
+        ContractPreflightService service = new ContractPreflightService();
+
+        List<GeneratedTestCase> cases = service.generateAndValidate(
+                KnownContracts.maximumSubarray(),
+                List.of("edge_boundary", "random_small"));
+
+        assertThat(cases).hasSize(2);
+        assertThat(cases.getFirst().input().trim().split("\\s+").length).isGreaterThan(1);
+    }
+
+    @Test
+    void gameTheoryContractRequiresLeadingTestCountAndArrays() {
+        ContractValidator validator = new ContractValidator();
+
+        validator.validateInput(KnownContracts.maxWelterGame(), """
+                2
+                1
+                1
+                3
+                1 4 5
+                """);
+
+        assertThatThrownBy(() -> validator.validateInput(KnownContracts.maxWelterGame(), """
+                2
+                1
+                1 4 5
+                """))
+                .isInstanceOf(ContractViolationException.class);
+    }
 }

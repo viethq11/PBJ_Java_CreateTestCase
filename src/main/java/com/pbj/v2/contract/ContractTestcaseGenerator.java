@@ -27,6 +27,8 @@ public class ContractTestcaseGenerator {
             for (InputSection section : contract.sections()) {
                 if (section.kind() == InputSection.Kind.SCALARS) {
                     emitScalars(input, section.fields(), variables, profile, random);
+                } else if (section.kind() == InputSection.Kind.ARRAY || section.kind() == InputSection.Kind.ROWS) {
+                    emitRows(input, section, variables, profile, random);
                 } else if (section.kind() == InputSection.Kind.COMMANDS) {
                     emitCommands(input, section, variables, profile, random);
                 }
@@ -70,6 +72,22 @@ public class ContractTestcaseGenerator {
                 long max = arg.max().resolve(variables);
                 long value = chooseValue(arg.name(), min, max, profile, random);
                 input.append(' ').append(value);
+            }
+            input.append('\n');
+        }
+    }
+
+    private void emitRows(StringBuilder input, InputSection section,
+                          Map<String, Long> variables, String profile, Random random) {
+        long count = variables.get(section.repeatField());
+        for (long row = 0; row < count; row++) {
+            for (int i = 0; i < section.fields().size(); i++) {
+                ScalarField field = section.fields().get(i);
+                long min = field.min().resolve(variables);
+                long max = field.max().resolve(variables);
+                long value = chooseValue(field.name(), min, max, profile, random);
+                if (i > 0) input.append(' ');
+                input.append(value);
             }
             input.append('\n');
         }

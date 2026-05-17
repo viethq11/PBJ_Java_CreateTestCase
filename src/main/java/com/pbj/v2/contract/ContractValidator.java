@@ -23,6 +23,13 @@ public class ContractValidator {
                 for (ScalarField field : section.fields()) {
                     variables.add(field.name());
                 }
+            } else if (section.kind() == InputSection.Kind.ARRAY || section.kind() == InputSection.Kind.ROWS) {
+                if (section.repeatField() == null || !variables.contains(section.repeatField())) {
+                    throw new ContractViolationException(section.kind() + " section repeat field is not declared: " + section.repeatField());
+                }
+                if (section.fields().isEmpty()) {
+                    throw new ContractViolationException(section.kind() + " section has no fields.");
+                }
             } else if (section.kind() == InputSection.Kind.COMMANDS) {
                 if (section.repeatField() == null || !variables.contains(section.repeatField())) {
                     throw new ContractViolationException("Command section repeat field is not declared: " + section.repeatField());
@@ -58,6 +65,19 @@ public class ContractValidator {
                         long max = field.max().resolve(variables);
                         assertRange(field.name(), value, min, max);
                         variables.put(field.name(), value);
+                    }
+                } else if (section.kind() == InputSection.Kind.ARRAY || section.kind() == InputSection.Kind.ROWS) {
+                    long repeat = variables.getOrDefault(section.repeatField(), -1L);
+                    if (repeat < 0) {
+                        throw new ContractViolationException("Invalid repeat count for " + section.repeatField());
+                    }
+                    for (long i = 0; i < repeat; i++) {
+                        for (ScalarField field : section.fields()) {
+                            long value = nextLong(scanner, field.name());
+                            long min = field.min().resolve(variables);
+                            long max = field.max().resolve(variables);
+                            assertRange(field.name(), value, min, max);
+                        }
                     }
                 } else if (section.kind() == InputSection.Kind.COMMANDS) {
                     long repeat = variables.getOrDefault(section.repeatField(), -1L);

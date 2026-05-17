@@ -120,4 +120,20 @@ class ProblemStructureClassifierTest {
                 "Help calculate how many different ways to choose sticks from the bag to create different polygons."))
                 .isEqualTo(ProblemFamily.COMBINATORICS);
     }
+
+    @Test
+    void detectsStringKmpCountCorrectlyWithPatternKeyword() {
+        assertThat(classifier.classify(
+                "KMP Pattern Occurrences",
+                "Given a text and a pattern, count all occurrences of the pattern in the text using KMP."))
+                .isEqualTo(ProblemFamily.STRING);
+    }
+
+    @Test
+    void genericPatternKeywordInGameDoesNotHijackToStringFamily() {
+        assertThat(classifier.classify(
+                "Game Play",
+                "Determine the optimal pattern of moves for the player to win this game."))
+                .isEqualTo(ProblemFamily.GAME_THEORY);
+    }
 }

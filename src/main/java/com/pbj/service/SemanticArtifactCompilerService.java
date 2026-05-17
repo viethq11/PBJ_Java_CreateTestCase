@@ -23,48 +23,47 @@ public class SemanticArtifactCompilerService {
     private final ObjectMapper objectMapper;
 
     public void compileMissingArtifacts(AiResponseDTO dto) {
-        if (dto == null || dto.getSemanticSpec() == null || dto.getSemanticSpec().getInputModel() == null) return;
-        JsonNode model = dto.getSemanticSpec().getInputModel();
-        if (isCommandModel(model)) {
-            if (isMissing(dto.getInputSchema())) {
-                dto.setInputSchema(buildCommandInputSchema(dto.getSemanticSpec(), model));
+        if (dto == null) return;
+
+        if (dto.getSemanticSpec() != null && dto.getSemanticSpec().getInputModel() != null) {
+            JsonNode model = dto.getSemanticSpec().getInputModel();
+            if (isCommandModel(model)) {
+                if (isMissing(dto.getInputSchema())) {
+                    dto.setInputSchema(buildCommandInputSchema(dto.getSemanticSpec(), model));
+                }
+                if (dto.getTestPlan() == null) {
+                    dto.setTestPlan(buildCommandTestPlan(model));
+                }
+                if (isBlank(dto.getGeneratorCode())) {
+                    dto.setGeneratorCode(buildCommandGenerator(dto.getSemanticSpec(), model));
+                    dto.setGeneratorLanguage("cpp");
+                }
+            } else if (isArrayModel(model)) {
+                if (isMissing(dto.getInputSchema())) {
+                    dto.setInputSchema(buildArrayInputSchema(dto.getSemanticSpec(), model));
+                }
+                if (dto.getTestPlan() == null) {
+                    dto.setTestPlan(buildArrayTestPlan());
+                }
+                if (isBlank(dto.getGeneratorCode())) {
+                    dto.setGeneratorCode(buildArrayGenerator(dto.getSemanticSpec(), model));
+                    dto.setGeneratorLanguage("cpp");
+                }
+            } else if (isScalarModel(model)) {
+                if (isMissing(dto.getInputSchema())) {
+                    dto.setInputSchema(buildScalarInputSchema(dto.getSemanticSpec(), model));
+                }
+                if (dto.getTestPlan() == null) {
+                    dto.setTestPlan(buildScalarTestPlan());
+                }
+                if (isBlank(dto.getGeneratorCode())) {
+                    dto.setGeneratorCode(buildScalarGenerator(dto.getSemanticSpec(), model));
+                    dto.setGeneratorLanguage("cpp");
+                }
             }
-            if (dto.getTestPlan() == null) {
-                dto.setTestPlan(buildCommandTestPlan(model));
-            }
-            if (isBlank(dto.getGeneratorCode())) {
-                dto.setGeneratorCode(buildCommandGenerator(dto.getSemanticSpec(), model));
-                dto.setGeneratorLanguage("cpp");
-            }
-            return;
         }
 
-        if (isArrayModel(model)) {
-            if (isMissing(dto.getInputSchema())) {
-                dto.setInputSchema(buildArrayInputSchema(dto.getSemanticSpec(), model));
-            }
-            if (dto.getTestPlan() == null) {
-                dto.setTestPlan(buildArrayTestPlan());
-            }
-            if (isBlank(dto.getGeneratorCode())) {
-                dto.setGeneratorCode(buildArrayGenerator(dto.getSemanticSpec(), model));
-                dto.setGeneratorLanguage("cpp");
-            }
-            return;
-        }
-
-        if (isScalarModel(model)) {
-            if (isMissing(dto.getInputSchema())) {
-                dto.setInputSchema(buildScalarInputSchema(dto.getSemanticSpec(), model));
-            }
-            if (dto.getTestPlan() == null) {
-                dto.setTestPlan(buildScalarTestPlan());
-            }
-            if (isBlank(dto.getGeneratorCode())) {
-                dto.setGeneratorCode(buildScalarGenerator(dto.getSemanticSpec(), model));
-                dto.setGeneratorLanguage("cpp");
-            }
-        }
+        ensureFallbackArtifacts(dto);
     }
 
     private boolean isMissing(JsonNode node) {
@@ -588,6 +587,85 @@ public class SemanticArtifactCompilerService {
             return negative ? -value : value;
         }
         return fallback;
+    }
+
+    private void ensureFallbackArtifacts(AiResponseDTO dto) {
+        if (isMissing(dto.getInputSchema())) {
+            ObjectNode schema = objectMapper.createObjectNode();
+            boolean multi = false;
+            if (dto.getSemanticSpec() != null) {
+                SemanticSpecDTO spec = dto.getSemanticSpec();
+                if (spec.getInputModel() != null) {
+                    multi = isMultiTest(spec.getInputModel());
+                }
+                if (!multi && spec.getGraphType() != null) {
+                    multi = spec.getGraphType().toLowerCase(Locale.ROOT).contains("multi");
+                }
+            }
+            if (!multi && dto.getInputFormat() != null) {
+                String inputLower = dto.getInputFormat().toLowerCase(Locale.ROOT);
+                multi = inputLower.contains("multiple test") || inputLower.contains("test cases");
+            }
+            
+            schema.put("multiple_test_cases", multi);
+            ArrayNode lines = schema.putArray("lines");
+            
+            ObjectNode scalarLine = lines.addObject();
+            scalarLine.put("kind", "scalars");
+            ArrayNode fields = scalarLine.putArray("fields");
+            
+            List<String> vars = new ArrayList<>();
+            if (dto.getSemanticSpec() != null && dto.getSemanticSpec().getQueryVariables() != null) {
+                for (String q : dto.getSemanticSpec().getQueryVariables()) {
+                    if (q != null && !q.isBlank()) vars.add(q);
+                }
+            }
+            if (vars.isEmpty()) {
+                String text = (dto.getInputFormat() != null ? dto.getInputFormat() : "") 
+                            + " " + (dto.getConstraints() != null ? dto.getConstraints() : "");
+                String textLower = text.toLowerCase(Locale.ROOT);
+                if (textLower.contains(" r ") || textLower.contains(" r,") || textLower.contains(" r\n")) vars.add("R");
+                if (textLower.contains(" c ") || textLower.contains(" c,") || textLower.contains(" c\n")) vars.add("C");
+                if (textLower.contains(" n ") || textLower.contains(" n,") || textLower.contains(" n\n")) vars.add("N");
+                if (textLower.contains(" m ") || textLower.contains(" m,") || textLower.contains(" m\n")) vars.add("M");
+                if (textLower.contains(" k ") || textLower.contains(" k,") || textLower.contains(" k\n")) vars.add("K");
+            }
+            if (vars.isEmpty()) {
+                vars.add("N");
+            }
+            
+            for (String name : vars) {
+                Bounds bounds = boundsFor(dto.getSemanticSpec(), name, defaultMin(name), defaultMax(name));
+                ObjectNode field = fields.addObject();
+                field.put("name", name);
+                field.put("type", "int");
+                field.put("min", bounds.min());
+                field.put("max", bounds.max());
+            }
+            
+            ObjectNode raw = lines.addObject();
+            raw.put("kind", "raw_lines");
+            raw.put("length", "1");
+            
+            dto.setInputSchema(schema);
+        }
+        
+        if (dto.getTestPlan() == null) {
+            AiResponseDTO.TestPlan plan = new AiResponseDTO.TestPlan();
+            plan.setProblemType("generic_fallback_input");
+            plan.setIntendedSolution("Solve the problem within time and memory limits.");
+            
+            AiResponseDTO.TestFamily family = new AiResponseDTO.TestFamily();
+            family.setName("general_stress");
+            family.setDifficulty("stress");
+            family.setTarget(List.of("performance", "correctness"));
+            family.setConstraints("general input size near limits");
+            family.setExpected("correct solution output");
+            family.setReason("verifies baseline correctness");
+            
+            plan.setTestFamilies(List.of(family));
+            dto.setTestPlan(plan);
+        }
     }
 
     private record Bounds(long min, long max) {}

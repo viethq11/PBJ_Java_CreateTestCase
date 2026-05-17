@@ -64,6 +64,20 @@ class SemanticSpecValidationServiceTest {
     }
 
     @Test
+    void acceptsCountingSpecWithoutRelationalPathsOrConditions() {
+        SemanticSpecDTO spec = new SemanticSpecDTO();
+        spec.setQueryVariables(List.of());
+        spec.setIgnoredVariables(List.of());
+        spec.setPaths(List.of());
+        spec.setConditions(List.of());
+        spec.setGraphType("grid");
+        spec.setCountedObjects(List.of("valid drawings"));
+        spec.setOutputSemantics("number of valid drawings");
+
+        service.validate(spec);
+    }
+
+    @Test
     void rejectsRelationalSpecWithoutConditions() {
         SemanticSpecDTO spec = connectopolisSpec();
         spec.setConditions(List.of());

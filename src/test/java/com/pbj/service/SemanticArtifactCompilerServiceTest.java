@@ -3,6 +3,7 @@ package com.pbj.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pbj.dto.AiResponseDTO;
 import com.pbj.dto.SemanticSpecDTO;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -211,5 +212,24 @@ class SemanticArtifactCompilerServiceTest {
         assertThat(dto.getInputSchema().path("lines").get(1).path("length").asText()).isEqualTo("m");
         assertThat(dto.getTestPlan().getProblemType()).isEqualTo("generic_command_stream");
         assertThat(dto.getGeneratorCode()).contains("UPDATE").contains("QUERY");
+    }
+
+    @Test
+    void compilesFallbackArtifactsWhenUnrecognizedOrMissingModel() throws Exception {
+        AiResponseDTO dto = new AiResponseDTO();
+        SemanticSpecDTO spec = new SemanticSpecDTO();
+        // Null or empty model representing unrecognized problem category
+        spec.setInputModel(null);
+        spec.setQueryVariables(List.of("R", "C"));
+        dto.setSemanticSpec(spec);
+
+        service.compileMissingArtifacts(dto);
+
+        assertThat(dto.getInputSchema()).isNotNull();
+        assertThat(dto.getInputSchema().path("lines").get(0).path("fields")).hasSize(2);
+        assertThat(dto.getInputSchema().path("lines").get(0).path("fields").get(0).path("name").asText()).isEqualTo("R");
+        assertThat(dto.getTestPlan()).isNotNull();
+        assertThat(dto.getTestPlan().getProblemType()).isEqualTo("generic_fallback_input");
+        assertThat(dto.getGeneratorCode()).isNullOrEmpty();
     }
 }

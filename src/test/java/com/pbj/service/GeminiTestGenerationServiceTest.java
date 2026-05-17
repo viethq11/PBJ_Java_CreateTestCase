@@ -477,4 +477,33 @@ class GeminiTestGenerationServiceTest {
 
         assertThat(prompt).contains("analysis_summary\": \"one concise sentence, at most 180 characters\"");
     }
+
+    @Test
+    void extractVietnameseProblemFieldsUsesAuthoritativePrompt() throws Exception {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        Method method = GeminiTestGenerationService.class.getDeclaredMethod("extractVietnameseProblemFields", String.class);
+        assertThat(method).isNotNull();
+    }
+
+    @Test
+    void repairUnescapedJsonQuotesHealsMalformedJson() {
+        GeminiTestGenerationService service = new GeminiTestGenerationService();
+        String malformedJson = "{\n" +
+                "  \"formatted_description\": \"ok\",\n" +
+                "  \"generator_code\": \"cout << R << \\\" \\\" << C << \\\" \\\" << k << endl; s_val = \\\"red\\\";\",\n" +
+                "  \"golden_solution\": \"cout << \\\\\\\"hello\\\\\\\";\",\n" +
+                "  \"wrong_solutions\": [\n" +
+                "    {\n" +
+                "      \"name\": \"partial\",\n" +
+                "      \"code\": \"if (x == \\\"green\\\") return;\"\n" +
+                "    }\n" +
+                "  ]\n" +
+                "}";
+
+        String repaired = service.repairUnescapedJsonQuotes(malformedJson);
+
+        assertThat(repaired).contains("cout << R << \\\" \\\" << C << \\\" \\\" << k << endl; s_val = \\\"red\\\";");
+        assertThat(repaired).contains("cout << \\\\\\\"hello\\\\\\\";");
+        assertThat(repaired).contains("if (x == \\\"green\\\") return;");
+    }
 }

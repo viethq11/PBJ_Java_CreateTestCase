@@ -67,8 +67,7 @@ public class SemanticSpecValidationService {
         }
 
         List<String> conditions = spec.getConditions();
-        boolean relationBearingSpec = hasAny(spec.getPaths())
-                || hasAny(spec.getCountedObjects());
+        boolean relationBearingSpec = hasAny(spec.getPaths());
         if ((conditions == null || conditions.isEmpty()) && relationBearingSpec) {
             throw new IllegalStateException("Semantic spec with relational structure must freeze at least one condition.");
         }

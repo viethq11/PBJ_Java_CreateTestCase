@@ -52,13 +52,17 @@ public class ProblemPatternAnalyzer {
             evidence.add("array maximum-subarray semantics");
             return GenerationPattern.MAXIMUM_SUBARRAY;
         }
+        GenerationPattern gen = generalPattern(text, evidence);
+        if (gen != GenerationPattern.UNKNOWN) {
+            return gen;
+        }
         return GenerationPattern.UNKNOWN;
     }
 
     private GenerationPattern overflowPattern(String text, List<String> evidence) {
         if (containsAny(text, "64 bit", "long long")
                 || containsAll(text, "sum", "can exceed", "32 bit")
-                || containsAll(text, "sum", "10 9")) {
+                || containsAll(text, "sum", "exceed", "32 bit")) {
             evidence.add("sum requires widened accumulator");
             return GenerationPattern.ARRAY_SUM_OVERFLOW;
         }
@@ -107,8 +111,7 @@ public class ProblemPatternAnalyzer {
 
     private GenerationPattern gridPattern(String text, List<String> evidence) {
         if (containsAny(text, "dangerous cells", "dangerous cell")
-                && containsAny(text, "load bearing capacity", "load-bearing capacity")
-                && containsAll(text, "cell 1 1", "cell n n")) {
+                || (containsAny(text, "load bearing", "load-bearing") && containsAny(text, "dangerous", "danger"))) {
             evidence.add("grid path with dangerous-cell threshold semantics");
             return GenerationPattern.GRID_DANGER_DETECTION;
         }
@@ -200,13 +203,13 @@ public class ProblemPatternAnalyzer {
     }
 
     private GenerationPattern combinatoricsPattern(String text, List<String> evidence) {
-        if (containsAll(text, "permutation", "lexicographic", "index")
-                && containsAny(text, "find the permutation", "find the index")) {
+        if (containsAll(text, "permutation", "lexicographic")
+                || containsAll(text, "permutation", "rank")
+                || containsAll(text, "permutation", "index")) {
             evidence.add("permutation ranking/unranking semantics");
             return GenerationPattern.PERMUTATION_RANK_UNRANK;
         }
-        if (containsAny(text, "how many different ways", "number of different polygons")
-                && containsAny(text, "sticks", "polygon")) {
+        if (text.contains("polygon") && (containsAny(text, "stick", "subset", "choose"))) {
             evidence.add("subset-count polygon combinatorics semantics");
             return GenerationPattern.POLYGON_SUBSET_COUNT;
         }
@@ -231,8 +234,8 @@ public class ProblemPatternAnalyzer {
             evidence.add("greedy interval scheduling semantics");
             return GenerationPattern.GREEDY_INTERVAL_SCHEDULING;
         }
-        if (containsAll(text, "insert", "minimum number of mistakes")
-                || containsAll(text, "minimum", "inversions", "insert")) {
+        if (containsAll(text, "insert", "mistakes")
+                || (containsAny(text, "minimum", "minimize") && containsAll(text, "inversion", "insert"))) {
             evidence.add("insertion order minimizing inversions");
             return GenerationPattern.INSERTION_INVERSION_MINIMIZATION;
         }
@@ -249,19 +252,17 @@ public class ProblemPatternAnalyzer {
 
     private GenerationPattern gamePattern(String text, List<String> evidence) {
         if (containsAll(text, "rightmost", "cow")
-                && containsAll(text, "empty", "stall")
-                && containsAny(text, "hieu", "rr")) {
+                && (text.contains("stall") || containsAny(text, "hieu", "rr"))) {
             evidence.add("rightmost-cow move rule");
             evidence.add("winner labels Hieu/RR");
             return GenerationPattern.MAX_WELTER_COW_GAME;
         }
-        if (containsAny(text, "remove 1, 2, or 3", "remove 1 2 or 3", "take 1 2 or 3")
-                && containsAny(text, "stones", "pile")) {
+        if (containsAny(text, "1 2 or 3", "1 2 3") && containsAny(text, "stone", "pile", "remove", "take")) {
             evidence.add("take-away game with moves {1,2,3}");
             return GenerationPattern.SUBTRACTION_GAME;
         }
         if (containsAny(text, "expected value", "expected score")
-                && containsAny(text, "optimal strategy", "play optimally", "make their choices optimally")) {
+                && containsAny(text, "optimal", "optimally")) {
             evidence.add("expected-value game under optimal play");
             return GenerationPattern.EXPECTED_VALUE_OPTIMAL_PLAY;
         }

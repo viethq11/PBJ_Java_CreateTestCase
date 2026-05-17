@@ -121,7 +121,8 @@ public class GeminiTestGenerationService {
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
-                        "temperature", 0.1
+                        "temperature", 0.1,
+                        "maxOutputTokens", 8192
                 )
         );
         String responseText = executeGeminiRequest(requestBody, "Gemini (Problem Analysis)");
@@ -184,7 +185,8 @@ public class GeminiTestGenerationService {
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
-                        "temperature", 0
+                        "temperature", 0,
+                        "maxOutputTokens", 8192
                 )
         );
         String responseText = executeGeminiRequest(requestBody, "Gemini (Semantic Spec Extract)");
@@ -201,7 +203,8 @@ public class GeminiTestGenerationService {
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
-                        "temperature", 0.2
+                        "temperature", 0.2,
+                        "maxOutputTokens", 8192
                 )
         );
         String responseText = executeGeminiRequest(requestBody, "Gemini (Test Generation V2)");
@@ -214,7 +217,8 @@ public class GeminiTestGenerationService {
                 "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
-                        "temperature", 0.1
+                        "temperature", 0.1,
+                        "maxOutputTokens", 8192
                 )
         );
         String responseText = executeGeminiRequest(requestBody, "Gemini (Reference Candidate Recovery)");
@@ -280,7 +284,8 @@ public class GeminiTestGenerationService {
                     )),
                     "generationConfig", Map.of(
                             "responseMimeType", "application/json",
-                            "temperature", 0.1
+                            "temperature", 0.1,
+                            "maxOutputTokens", 8192
                     )
             );
 
@@ -720,8 +725,10 @@ public class GeminiTestGenerationService {
                 .replace("[\\n", "[")
                 .replace(",\\n", ",");
 
+        String repairedText = repairUnescapedJsonQuotes(cleanedText);
         try {
-            JsonNode root = readJsonWithContext(cleanedText);
+
+            JsonNode root = readJsonWithContext(repairedText);
             AiResponseDTO dto = new AiResponseDTO();
             dto.setUnderstanding(root.path("understanding").asText(""));
             dto.setFormattedDescription(normalizeStatementMarkdown(root.path("formatted_description").asText("")));
@@ -822,7 +829,7 @@ public class GeminiTestGenerationService {
             }
             return dto;
         } catch (Exception e) {
-            String recovered = recoverTruncatedTopLevelObjectJson(cleanedText);
+            String recovered = recoverTruncatedTopLevelObjectJson(repairedText);
             if (recovered != null) {
                 try {
                     System.err.println("WARN: Recovered truncated Gemini artifact JSON by dropping incomplete trailing field.");
@@ -833,9 +840,81 @@ public class GeminiTestGenerationService {
             }
             System.err.println("\n=== RAW GEMINI RESPONSE (FOR DEBUGGING) ===");
             System.err.println(cleanedText);
+            System.err.println("=== REPAIRED GEMINI RESPONSE ===");
+            System.err.println(repairedText);
             System.err.println("==========================================\n");
             throw new RuntimeException("Failed to parse Gemini test generation response: " + e.getMessage(), e);
         }
+    }
+
+    String repairUnescapedJsonQuotes(String json) {
+        if (json == null || json.isBlank()) return json;
+
+        String[] codeKeys = {
+            "generator_code",
+            "golden_solution",
+            "bruteforce_solution",
+            "validator_code",
+            "code"
+        };
+
+        StringBuilder sb = new StringBuilder(json);
+        for (String key : codeKeys) {
+            String searchPattern = "\"" + key + "\"";
+            int index = 0;
+            while ((index = sb.indexOf(searchPattern, index)) != -1) {
+                int colonIndex = sb.indexOf(":", index + searchPattern.length());
+                if (colonIndex == -1) {
+                    index += searchPattern.length();
+                    continue;
+                }
+
+                int startQuoteIndex = sb.indexOf("\"", colonIndex + 1);
+                if (startQuoteIndex == -1) {
+                    index += searchPattern.length();
+                    continue;
+                }
+
+                int i = startQuoteIndex + 1;
+                while (i < sb.length()) {
+                    char c = sb.charAt(i);
+                    if (c == '\\') {
+                        if (i + 1 < sb.length()) {
+                            i += 2;
+                        } else {
+                            i++;
+                        }
+                        continue;
+                    }
+
+                    if (c == '"') {
+                        int nextNonWhitespaceIdx = findNextNonWhitespace(sb, i + 1);
+                        if (nextNonWhitespaceIdx < sb.length()) {
+                            char nextChar = sb.charAt(nextNonWhitespaceIdx);
+                            if (nextChar == ',' || nextChar == '}' || nextChar == ']') {
+                                i = nextNonWhitespaceIdx;
+                                break;
+                            }
+                        }
+
+                        sb.insert(i, '\\');
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                }
+                index = i;
+            }
+        }
+        return sb.toString();
+    }
+
+    private int findNextNonWhitespace(StringBuilder sb, int start) {
+        int i = start;
+        while (i < sb.length() && Character.isWhitespace(sb.charAt(i))) {
+            i++;
+        }
+        return i;
     }
 
     String recoverTruncatedTopLevelObjectJson(String json) {
@@ -1539,5 +1618,52 @@ public class GeminiTestGenerationService {
                   "total_testcases": %d
                 }
                 """.formatted(semanticJson, analysisJson, count);
+    }
+
+    public com.pbj.dto.AiResponseDTO extractVietnameseProblemFields(String sourceText) {
+        String prompt = """
+                You are an expert technical translator and competitive programming editor.
+                Read the authoritative competitive programming problem statement text carefully:
+                
+                %s
+                
+                Your job is to extract and translate the core problem sections into high-quality Vietnamese, formatting all math using LaTeX.
+                
+                Return ONLY a valid JSON object with the following fields:
+                {
+                  "formatted_description": "Mô tả chi tiết bài toán bằng tiếng Việt. Chia thành các đoạn ngắn bằng \\\\n\\\\n. Dùng LaTeX cho mọi công thức toán, biến số, và biểu thức ($...$ cho inline math, $$...$$ cho block math).",
+                  "input_format": "Định dạng dữ liệu vào bằng tiếng Việt. Giải thích rõ từng dòng/phần tử. Dùng LaTeX.",
+                  "output_format": "Định dạng dữ liệu ra bằng tiếng Việt. Giải thích kết quả cần in ra. Dùng LaTeX.",
+                  "constraints": "Các giới hạn ràng buộc (constraints) bằng tiếng Việt dưới dạng danh sách markdown, dùng LaTeX (ví dụ: $1 \\\\le n \\\\le 10^{18}$)."
+                }
+                
+                Rules:
+                - Do NOT include any additional prose or markdown fences. Output ONLY the raw JSON string.
+                - All variable names, constant values, and formulas must use strict LaTeX: $N$, $10^5$, $a_i$, $1 \\\\le n \\\\le 10^{18}$, $S = \\\\sum_{i=1}^n F(i)^k$.
+                - Ensure backslashes are properly escaped in the JSON string (e.g., \\\\le, \\\\sum).
+                """.formatted(sourceText);
+
+        java.util.Map<String, Object> requestBody = java.util.Map.of(
+                "contents", java.util.List.of(java.util.Map.of("parts", java.util.List.of(java.util.Map.of("text", prompt)))),
+                "generationConfig", java.util.Map.of(
+                        "responseMimeType", "application/json",
+                        "temperature", 0.1,
+                        "maxOutputTokens", 8192
+                )
+        );
+
+        String responseText = executeGeminiRequest(requestBody, "Gemini (Metadata Extraction)");
+        try {
+            JsonNode root = objectMapper.readTree(stripMarkdownFences(responseText));
+            com.pbj.dto.AiResponseDTO dto = new com.pbj.dto.AiResponseDTO();
+            dto.setFormattedDescription(root.path("formatted_description").asText(""));
+            dto.setInputFormat(root.path("input_format").asText(""));
+            dto.setOutputFormat(root.path("output_format").asText(""));
+            dto.setConstraints(root.path("constraints").asText(""));
+            return dto;
+        } catch (Exception e) {
+            System.err.println("WARN: Failed to parse extracted metadata JSON, returning empty fields. Error: " + e.getMessage());
+            return new com.pbj.dto.AiResponseDTO();
+        }
     }
 }

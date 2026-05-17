@@ -543,4 +543,53 @@ public final class KnownContracts {
                 "Print First if the starting player wins, otherwise Second."
         );
     }
+
+    public static ProblemContract permutationRankUnrank() {
+        Bound one = Bound.of(1);
+        Bound eight = Bound.of(8);
+        CommandVariant rank = new CommandVariant("RANK", List.of(
+                new ScalarField("n", one, eight),
+                new ScalarField("p1", one, eight),
+                new ScalarField("p2", one, eight),
+                new ScalarField("p3", one, eight),
+                new ScalarField("p4", one, eight),
+                new ScalarField("p5", one, eight),
+                new ScalarField("p6", one, eight),
+                new ScalarField("p7", one, eight),
+                new ScalarField("p8", one, eight)
+        ));
+        CommandVariant unrank = new CommandVariant("UNRANK", List.of(
+                new ScalarField("n", one, eight),
+                new ScalarField("k", one, Bound.of(40320L))
+        ));
+        return new ProblemContract(
+                "Permutation Mapping",
+                true,
+                Bound.of(1),
+                Bound.of(5),
+                List.of(
+                        InputSection.scalars(List.of(new ScalarField("q", Bound.of(1), Bound.of(5)))),
+                        InputSection.commands("q", List.of(rank, unrank))
+                ),
+                "Print rank or space-separated permutation."
+        );
+    }
+
+    public static ProblemContract stringKmpCount() {
+        return new ProblemContract(
+                "KMP Pattern Occurrences",
+                false,
+                null,
+                null,
+                List.of(
+                        InputSection.scalars(List.of(
+                                new ScalarField("n", Bound.of(1), Bound.of(50)),
+                                new ScalarField("m", Bound.of(1), Bound.of(20))
+                        )),
+                        InputSection.array("n", new ScalarField("s", Bound.of(1), Bound.of(26))),
+                        InputSection.array("m", new ScalarField("p", Bound.of(1), Bound.of(26)))
+                ),
+                "Print the count of pattern occurrences."
+        );
+    }
 }

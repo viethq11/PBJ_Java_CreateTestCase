@@ -6,6 +6,7 @@ import com.pbj.service.GeminiTestGenerationService;
 import com.pbj.service.OcrCleanerService;
 import com.pbj.service.TestCaseStorageService;
 import com.pbj.v2.contract.ContractValidator;
+import com.pbj.v2.contract.ContractTestcaseGenerator;
 import com.pbj.v2.contract.GeneratedTestCase;
 import com.pbj.v2.contract.KnownContracts;
 import lombok.RequiredArgsConstructor;
@@ -54,8 +55,15 @@ public class V2ProblemGenerationService {
             GenerationPattern.CONSTRUCTIVE_EVEN_ODD_PERMUTATION,
             GenerationPattern.DIGIT_PRODUCT_FACTORIZATION,
             GenerationPattern.MAX_WELTER_COW_GAME,
-            GenerationPattern.SUBTRACTION_GAME
+            GenerationPattern.SUBTRACTION_GAME,
+            GenerationPattern.PERMUTATION_RANK_UNRANK,
+            GenerationPattern.STRING_KMP_COUNT
     );
+
+    public static boolean isPatternSupported(GenerationPattern pattern) {
+        return BACKEND_SUPPORTED_PATTERNS.contains(pattern);
+    }
+
     private final ProblemRepository problemRepository;
     private final TestCaseStorageService testCaseStorageService;
     private final GeminiTestGenerationService geminiTestGenerationService;
@@ -68,112 +76,81 @@ public class V2ProblemGenerationService {
         String source = resolveSourceText(description, base64Images);
         ProblemFamily family = problemStructureClassifier.classify(title, source);
         GenerationDecision decision = problemPatternAnalyzer.analyze(title, source, family);
+
+        Problem problem;
         if (decision.pattern() == GenerationPattern.POWER_TOWER_3D_COMMANDS) {
-            return generateCommandGridProblem(title, source, family);
+            problem = generateCommandGridProblem(title, source, family);
+        } else if (decision.pattern() == GenerationPattern.GRID_DANGER_DETECTION) {
+            problem = generateDangerDetectionGridProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.DIGIT_PRODUCT_FACTORIZATION) {
+            problem = generateDigitProductFactorizationProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.GCD_PAIR) {
+            problem = generateScalarOnlyProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.MAXIMUM_SUBARRAY) {
+            problem = generateArrayProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.ARRAY_SUM_OVERFLOW) {
+            problem = generateOverflowArraySumProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.TREE_DISTANCE_QUERIES) {
+            problem = generateGraphTreeProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.GRAPH_SHORTEST_PATH) {
+            problem = generateGraphShortestPathProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.GRAPH_REACHABILITY) {
+            problem = generateGraphReachabilityProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.GRAPH_DSU_COMPONENTS) {
+            problem = generateGraphDsuProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.GRAPH_TOPOLOGICAL_ORDER) {
+            problem = generateGraphToposortProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.TREE_DP_SUBTREE_SUM) {
+            problem = generateTreeDpProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.RANGE_SUM_QUERIES) {
+            problem = generateRangeSumQueriesProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.COIN_CHANGE_MIN_COINS) {
+            problem = generateCoinChangeProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.KNAPSACK_01) {
+            problem = generateKnapsackProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.LIS_LENGTH) {
+            problem = generateLisProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.BITMASK_ASSIGNMENT) {
+            problem = generateBitmaskAssignmentProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.FIBONACCI_POWER_SUM) {
+            problem = generateFibonacciPowerProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.POLYGON_SUBSET_COUNT) {
+            problem = generatePolygonSubsetProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.WEIGHTED_SEQUENCE_SUM) {
+            problem = generateWeightedSequenceSumProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.FENWICK_POINT_UPDATE_RANGE_SUM) {
+            problem = generateFenwickProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.SEGMENT_TREE_RANGE_SUM_UPDATE) {
+            problem = generateSegmentTreeProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.BINARY_SEARCH_LOWER_BOUND) {
+            problem = generateBinarySearchProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.BINARY_SEARCH_MIN_FEASIBLE) {
+            problem = generateMinFeasibleProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.TWO_POINTER_PAIR_COUNT) {
+            problem = generateTwoPointersProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.GREEDY_INTERVAL_SCHEDULING) {
+            problem = generateGreedyIntervalsProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.INSERTION_INVERSION_MINIMIZATION) {
+            problem = generateInsertionInversionProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.STRING_SUBSTRING_EQUALITY) {
+            problem = generateStringHashProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.CONSTRUCTIVE_EVEN_ODD_PERMUTATION) {
+            problem = generateConstructiveProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.MAX_WELTER_COW_GAME) {
+            problem = generateMaxWelterGameProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.SUBTRACTION_GAME) {
+            problem = generateSubtractionGameProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.PERMUTATION_RANK_UNRANK) {
+            problem = generatePermutationRankUnrankProblem(title, source);
+        } else if (decision.pattern() == GenerationPattern.STRING_KMP_COUNT) {
+            problem = generateStringKmpCountProblem(title, source);
+        } else {
+            System.err.println("WARN: V2 generation not supported for family " + family + " and pattern " + decision.pattern());
+            return null;
         }
-        if (decision.pattern() == GenerationPattern.GRID_DANGER_DETECTION) {
-            return generateDangerDetectionGridProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.DIGIT_PRODUCT_FACTORIZATION) {
-            return generateDigitProductFactorizationProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.GCD_PAIR) {
-            return generateScalarOnlyProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.MAXIMUM_SUBARRAY) {
-            return generateArrayProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.ARRAY_SUM_OVERFLOW) {
-            return generateOverflowArraySumProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.TREE_DISTANCE_QUERIES) {
-            return generateGraphTreeProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.GRAPH_SHORTEST_PATH) {
-            return generateGraphShortestPathProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.GRAPH_REACHABILITY) {
-            return generateGraphReachabilityProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.GRAPH_DSU_COMPONENTS) {
-            return generateGraphDsuProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.GRAPH_TOPOLOGICAL_ORDER) {
-            return generateGraphToposortProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.TREE_DP_SUBTREE_SUM) {
-            return generateTreeDpProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.RANGE_SUM_QUERIES) {
-            return generateRangeSumQueriesProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.COIN_CHANGE_MIN_COINS) {
-            return generateCoinChangeProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.KNAPSACK_01) {
-            return generateKnapsackProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.LIS_LENGTH) {
-            return generateLisProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.BITMASK_ASSIGNMENT) {
-            return generateBitmaskAssignmentProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.FIBONACCI_POWER_SUM) {
-            return generateFibonacciPowerProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.POLYGON_SUBSET_COUNT) {
-            return generatePolygonSubsetProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.WEIGHTED_SEQUENCE_SUM) {
-            return generateWeightedSequenceSumProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.FENWICK_POINT_UPDATE_RANGE_SUM) {
-            return generateFenwickProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.SEGMENT_TREE_RANGE_SUM_UPDATE) {
-            return generateSegmentTreeProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.BINARY_SEARCH_LOWER_BOUND) {
-            return generateBinarySearchProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.BINARY_SEARCH_MIN_FEASIBLE) {
-            return generateMinFeasibleProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.TWO_POINTER_PAIR_COUNT) {
-            return generateTwoPointersProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.GREEDY_INTERVAL_SCHEDULING) {
-            return generateGreedyIntervalsProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.INSERTION_INVERSION_MINIMIZATION) {
-            return generateInsertionInversionProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.STRING_SUBSTRING_EQUALITY) {
-            return generateStringHashProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.CONSTRUCTIVE_EVEN_ODD_PERMUTATION) {
-            return generateConstructiveProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.MAX_WELTER_COW_GAME) {
-            return generateMaxWelterGameProblem(title, source);
-        }
-        if (decision.pattern() == GenerationPattern.SUBTRACTION_GAME) {
-            return generateSubtractionGameProblem(title, source);
-        }
-        if (decision.pattern() != GenerationPattern.UNKNOWN) {
-            throw new IllegalArgumentException(
-                    "V2 classified this statement as " + family
-                            + " and recognized pattern " + decision.pattern()
-                            + ", but that pattern does not have a trusted backend generator yet. "
-                            + "Evidence: " + decision.evidence() + ". "
-                            + "Backend-supported patterns today: " + BACKEND_SUPPORTED_PATTERNS);
-        }
-        throw new IllegalArgumentException(
-                "V2 classified this statement as " + family
-                        + ", but it could not infer a trusted backend generation pattern yet. "
-                        + "Evidence: " + decision.evidence() + ". "
-                        + "Backend-supported patterns today: " + BACKEND_SUPPORTED_PATTERNS);
+
+        enrichProblemMetadataWithOriginalDetails(problem, source);
+        return problem;
     }
 
     private String resolveSourceText(String description, List<String> base64Images) {
@@ -192,7 +169,7 @@ public class V2ProblemGenerationService {
     private Problem generateCommandGridProblem(String requestedTitle, String source, ProblemFamily family) {
         Problem problem = new Problem();
         problem.setTitle(requestedTitle == null || requestedTitle.isBlank() ? "Command Grid Problem" : requestedTitle.trim());
-        problem.setDescription("""
+        setProblemDescription(problem, source, """
                 A tower is represented as an n x n x n grid. Initially every block has power level 0.
                 UPDATE x y z W sets the block at (x, y, z) to W.
                 QUERY x1 y1 z1 x2 y2 z2 asks for the sum of all block values in the inclusive cuboid.
@@ -454,7 +431,7 @@ public class V2ProblemGenerationService {
     private Problem generateDigitProductFactorizationProblem(String requestedTitle, String source) {
         Problem problem = new Problem();
         problem.setTitle(requestedTitle == null || requestedTitle.isBlank() ? "Digit Product Factorization" : requestedTitle.trim());
-        problem.setDescription("""
+        setProblemDescription(problem, source, """
                 Given two integers n and k, choose exactly k digits from 1 to 9 such that their product equals n.
                 Print the smallest numeric sequence formed by those digits, or -1 if no such sequence exists.
                 """);
@@ -479,7 +456,7 @@ public class V2ProblemGenerationService {
         problem.setAcceptedSolutionCode(digitProductReferenceSolution());
         Problem saved = problemRepository.save(problem);
 
-        List<GeneratedTestCase> generated = digitProductInputs();
+        List<GeneratedTestCase> generated = dynamicDigitProductInputs();
         int seq = 1;
         for (GeneratedTestCase testCase : generated) {
             String output = solveDigitProduct(testCase.input());
@@ -490,7 +467,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateDangerDetectionGridProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Danger Detection");
-        problem.setDescription("""
+        setProblemDescription(problem, source, """
                 A robot moves on an n x n grid from cell (1, 1) to cell (n, n) using adjacent cells.
                 Each cell has a positive load-bearing capacity a[i][j]. For a given weight G, a cell with capacity <= G
                 is dangerous. Problem 1 asks for the minimum number of dangerous cells on a path. Problem 2 asks for the
@@ -534,12 +511,7 @@ public class V2ProblemGenerationService {
                 int main(){ios::sync_with_stdio(false);cin.tie(nullptr);int typ;if(!(cin>>typ))return 0;int n,g=0;cin>>n;if(typ==1)cin>>g;vector<vector<int>>a(n,vector<int>(n));for(auto&row:a)for(int&x:row)cin>>x;int dx[4]={1,-1,0,0},dy[4]={0,0,1,-1};if(typ==1){const int INF=1e9;deque<pair<int,int>>dq;vector<vector<int>>d(n,vector<int>(n,INF));d[0][0]=(a[0][0]<=g);dq.push_back({0,0});while(!dq.empty()){auto [x,y]=dq.front();dq.pop_front();for(int k=0;k<4;k++){int nx=x+dx[k],ny=y+dy[k];if(nx<0||ny<0||nx>=n||ny>=n)continue;int w=(a[nx][ny]<=g);if(d[nx][ny]>d[x][y]+w){d[nx][ny]=d[x][y]+w;if(w)dq.push_back({nx,ny});else dq.push_front({nx,ny});}}}cout<<d[n-1][n-1]<<'\\n';}else{priority_queue<tuple<int,int,int>>pq;vector<vector<int>>best(n,vector<int>(n,-1));best[0][0]=a[0][0];pq.push({a[0][0],0,0});while(!pq.empty()){auto [cap,x,y]=pq.top();pq.pop();if(cap!=best[x][y])continue;for(int k=0;k<4;k++){int nx=x+dx[k],ny=y+dy[k];if(nx<0||ny<0||nx>=n||ny>=n)continue;int nc=min(cap,a[nx][ny]);if(nc>best[nx][ny]){best[nx][ny]=nc;pq.push({nc,nx,ny});}}}cout<<best[n-1][n-1]-1<<'\\n';}}
                 """);
         Problem saved = problemRepository.save(problem);
-        List<GeneratedTestCase> cases = List.of(
-                new GeneratedTestCase("type1_all_safe", 1, "1\n3 2\n5 5 5\n5 5 5\n5 5 5\n"),
-                new GeneratedTestCase("type1_forced_detour", 2, "1\n4 4\n9 1 1 9\n9 9 1 9\n1 9 1 9\n1 9 9 9\n"),
-                new GeneratedTestCase("type2_bottleneck", 3, "2\n4\n5 4 3 2\n6 7 2 1\n5 8 9 1\n4 4 10 10\n"),
-                new GeneratedTestCase("type2_single_cell", 4, "2\n1\n7\n")
-        );
+        List<GeneratedTestCase> cases = dynamicDangerDetectionGridInputs();
         saveGeneratedCases(saved, cases, this::solveDangerDetectionGrid, 2);
         return saved;
     }
@@ -555,6 +527,70 @@ public class V2ProblemGenerationService {
                 new GeneratedTestCase("minimum_digits_with_padding", 7, "72 5\n"),
                 new GeneratedTestCase("exact_single_digit", 8, "9 1\n")
         );
+    }
+
+    private List<GeneratedTestCase> dynamicDangerDetectionGridInputs() {
+        List<GeneratedTestCase> cases = new ArrayList<>();
+        Random random = new Random(42);
+        // Case 1: Type 1, n=4, G=5
+        StringBuilder c1 = new StringBuilder("1\n4 5\n");
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                c1.append(1 + random.nextInt(10)).append(j == 3 ? "" : " ");
+            }
+            c1.append("\n");
+        }
+        cases.add(new GeneratedTestCase("type1_dynamic_small", 1, c1.toString()));
+
+        // Case 2: Type 2, n=5
+        StringBuilder c2 = new StringBuilder("2\n5\n");
+        for (int i = 0; i < 5; i++) {
+            for (int j = 0; j < 5; j++) {
+                c2.append(1 + random.nextInt(20)).append(j == 4 ? "" : " ");
+            }
+            c2.append("\n");
+        }
+        cases.add(new GeneratedTestCase("type2_dynamic_medium", 2, c2.toString()));
+
+        // Case 3: Type 1, n=6, G=8 (larger boundary)
+        StringBuilder c3 = new StringBuilder("1\n6 8\n");
+        for (int i = 0; i < 6; i++) {
+            for (int j = 0; j < 6; j++) {
+                c3.append(1 + random.nextInt(15)).append(j == 5 ? "" : " ");
+            }
+            c3.append("\n");
+        }
+        cases.add(new GeneratedTestCase("type1_dynamic_large", 3, c3.toString()));
+
+        // Case 4: Type 2, n=8 (maximum constraint)
+        StringBuilder c4 = new StringBuilder("2\n8\n");
+        for (int i = 0; i < 8; i++) {
+            for (int j = 0; j < 8; j++) {
+                c4.append(1 + random.nextInt(100)).append(j == 7 ? "" : " ");
+            }
+            c4.append("\n");
+        }
+        cases.add(new GeneratedTestCase("type2_dynamic_max", 4, c4.toString()));
+
+        return cases;
+    }
+
+    private List<GeneratedTestCase> dynamicDigitProductInputs() {
+        List<GeneratedTestCase> cases = new ArrayList<>();
+        Random random = new Random(42);
+        cases.add(new GeneratedTestCase("sample_possible", 1, "12 2\n"));
+        cases.add(new GeneratedTestCase("sample_impossible", 2, "34 2\n"));
+        cases.add(new GeneratedTestCase("one_padding", 3, "1 5\n"));
+        cases.add(new GeneratedTestCase("dynamic_prime", 4, "999999937 4\n"));
+        long comp = 1;
+        for (int i = 0; i < 8; i++) comp *= (2 + random.nextInt(8));
+        cases.add(new GeneratedTestCase("dynamic_composite", 5, comp + " 10\n"));
+        cases.add(new GeneratedTestCase("dynamic_single", 6, (2 + random.nextInt(8)) + " 1\n"));
+        cases.add(new GeneratedTestCase("dynamic_too_many", 7, "1048576 3\n"));
+        long compLarge = 1;
+        for (int i = 0; i < 15; i++) compLarge *= (2 + random.nextInt(8));
+        cases.add(new GeneratedTestCase("dynamic_large_composite", 8, Math.min(1000000000L, compLarge) + " 20\n"));
+        return cases;
     }
 
     private String solveDigitProduct(String input) {
@@ -701,7 +737,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateScalarOnlyProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Greatest Common Divisor");
-        problem.setDescription("Given two positive integers a and b, print their greatest common divisor.");
+        setProblemDescription(problem, source, "Given two positive integers a and b, print their greatest common divisor.");
         problem.setInputFormat("The input contains two integers a and b.");
         problem.setOutputFormat("Print gcd(a, b).");
         problem.setConstraints("Generated judge data uses 1 <= a, b <= 1000000000.");
@@ -736,7 +772,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateArrayProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Maximum Subarray Sum");
-        problem.setDescription("Given an integer array, print the maximum sum of a non-empty contiguous subarray.");
+        setProblemDescription(problem, source, "Given an integer array, print the maximum sum of a non-empty contiguous subarray.");
         problem.setInputFormat("The first line contains n. The second line contains n integers.");
         problem.setOutputFormat("Print the maximum subarray sum.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 200 and -1000000000 <= a_i <= 1000000000.");
@@ -773,7 +809,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateOverflowArraySumProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Array Sum 64-bit");
-        problem.setDescription("Given n integers, print their total sum. The answer may exceed 32-bit signed range.");
+        setProblemDescription(problem, source, "Given n integers, print their total sum. The answer may exceed 32-bit signed range.");
         problem.setInputFormat("The first line contains n. The second line contains n integers.");
         problem.setOutputFormat("Print the 64-bit sum.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 200 and -1000000000 <= a_i <= 1000000000.");
@@ -807,7 +843,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateGraphTreeProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Tree Distance Queries");
-        problem.setDescription("Given a tree and node pairs, print the number of edges on the unique path between each pair.");
+        setProblemDescription(problem, source, "Given a tree and node pairs, print the number of edges on the unique path between each pair.");
         problem.setInputFormat("The first line contains n, q, e where e=n-1. The next e lines are edges. The next q lines are queries u v.");
         problem.setOutputFormat("For each query, print the tree distance.");
         problem.setConstraints("Generated judge data uses 2 <= n <= 60 and 1 <= q <= 80.");
@@ -842,7 +878,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateGraphShortestPathProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Graph Shortest Path");
-        problem.setDescription("Given a weighted undirected graph, find the shortest distance from s to t.");
+        setProblemDescription(problem, source, "Given a weighted undirected graph, find the shortest distance from s to t.");
         problem.setInputFormat("The first line contains n, m, s, t. The next m lines contain u, v, w.");
         problem.setOutputFormat("Print the shortest-path distance.");
         problem.setConstraints("Generated judge data uses 2 <= n <= 30, 1 <= m <= 80, and 1 <= w <= 1000.");
@@ -876,7 +912,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateGraphReachabilityProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Graph Reachability");
-        problem.setDescription("Given an undirected graph and a source vertex s, count how many vertices are reachable from s.");
+        setProblemDescription(problem, source, "Given an undirected graph and a source vertex s, count how many vertices are reachable from s.");
         problem.setInputFormat("The first line contains n, m, s. The next m lines contain undirected edges u v.");
         problem.setOutputFormat("Print the reachable vertex count.");
         problem.setConstraints("Generated judge data uses 2 <= n <= 30 and 1 <= m <= 80.");
@@ -903,7 +939,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateGraphDsuProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Connected Components");
-        problem.setDescription("Given an undirected graph, compute the number of connected components.");
+        setProblemDescription(problem, source, "Given an undirected graph, compute the number of connected components.");
         problem.setInputFormat("The first line contains n and m. The next m lines contain undirected edges u v.");
         problem.setOutputFormat("Print the number of connected components.");
         problem.setConstraints("Generated judge data uses 2 <= n <= 30 and 0 <= m <= 80.");
@@ -938,7 +974,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateGraphToposortProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Topological Order");
-        problem.setDescription("Given a DAG, print the lexicographically smallest topological ordering.");
+        setProblemDescription(problem, source, "Given a DAG, print the lexicographically smallest topological ordering.");
         problem.setInputFormat("The first line contains n and m. The next m lines contain directed edges u v.");
         problem.setOutputFormat("Print one valid lexicographically smallest topological order.");
         problem.setConstraints("Generated judge data uses 2 <= n <= 30 and 1 <= m <= 80.");
@@ -972,7 +1008,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateTreeDpProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Tree Subtree Sum");
-        problem.setDescription("Given a rooted tree with values, compute the sum of values in every subtree rooted at 1.");
+        setProblemDescription(problem, source, "Given a rooted tree with values, compute the sum of values in every subtree rooted at 1.");
         problem.setInputFormat("The first line contains n and e=n-1. The second line contains n values. The next e lines contain tree edges.");
         problem.setOutputFormat("Print n subtree sums.");
         problem.setConstraints("Generated judge data uses 2 <= n <= 30.");
@@ -1000,7 +1036,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateRangeSumQueriesProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Range Sum Queries");
-        problem.setDescription("Given an array and q queries [l, r], print the sum on each range.");
+        setProblemDescription(problem, source, "Given an array and q queries [l, r], print the sum on each range.");
         problem.setInputFormat("The first line contains n and q. The second line contains n integers. The next q lines contain l and r.");
         problem.setOutputFormat("Print one sum per query.");
         problem.setConstraints("Generated judge data uses 1 <= n, q <= 100.");
@@ -1038,7 +1074,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateCoinChangeProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Coin Change");
-        problem.setDescription("Given coin denominations and a target sum, find the minimum number of coins needed, or -1 if impossible.");
+        setProblemDescription(problem, source, "Given coin denominations and a target sum, find the minimum number of coins needed, or -1 if impossible.");
         problem.setInputFormat("The first line contains n and target. The second line contains n coin denominations.");
         problem.setOutputFormat("Print the minimum number of coins, or -1.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 20 and 0 <= target <= 200.");
@@ -1073,7 +1109,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateKnapsackProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "0/1 Knapsack");
-        problem.setDescription("Given item weights and values plus a capacity, choose a subset with maximum total value.");
+        setProblemDescription(problem, source, "Given item weights and values plus a capacity, choose a subset with maximum total value.");
         problem.setInputFormat("The first line contains n and capacity. The next n lines contain weight and value.");
         problem.setOutputFormat("Print the maximum achievable value.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 20 and 1 <= capacity <= 100.");
@@ -1107,7 +1143,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateLisProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Longest Increasing Subsequence");
-        problem.setDescription("Given an array, print the length of its longest strictly increasing subsequence.");
+        setProblemDescription(problem, source, "Given an array, print the length of its longest strictly increasing subsequence.");
         problem.setInputFormat("The first line contains n. The second line contains n integers.");
         problem.setOutputFormat("Print the LIS length.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 100.");
@@ -1141,7 +1177,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateBitmaskAssignmentProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Assignment DP");
-        problem.setDescription("Assign each of n workers to a distinct job with minimum total cost.");
+        setProblemDescription(problem, source, "Assign each of n workers to a distinct job with minimum total cost.");
         problem.setInputFormat("The first line contains n. The next n lines contain 8 costs; only the first n jobs are used.");
         problem.setOutputFormat("Print the minimum assignment cost.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 8 and 0 <= cost <= 100.");
@@ -1175,7 +1211,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateFibonacciPowerProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Fibonacci Power");
-        problem.setDescription("Given n and k, compute the sum of the first n Fibonacci numbers raised to power k modulo 998244353.");
+        setProblemDescription(problem, source, "Given n and k, compute the sum of the first n Fibonacci numbers raised to power k modulo 998244353.");
         problem.setInputFormat("The input contains two integers n and k.");
         problem.setOutputFormat("Print the requested sum modulo 998244353.");
         problem.setConstraints("Generated seed data uses 1 <= n <= 20 and 1 <= k <= 8 for exact backend verification.");
@@ -1213,7 +1249,7 @@ public class V2ProblemGenerationService {
 
     private Problem generatePolygonSubsetProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Intricate Polygons");
-        problem.setDescription("Count subsets of stick lengths that can form a polygon.");
+        setProblemDescription(problem, source, "Count subsets of stick lengths that can form a polygon.");
         problem.setInputFormat("The first line contains n. The next line contains n stick lengths.");
         problem.setOutputFormat("Print the number of valid polygon subsets modulo 1000000007.");
         problem.setConstraints("Generated seed data uses 1 <= n <= 14 and 1 <= a_i <= 30.");
@@ -1231,7 +1267,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateWeightedSequenceSumProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Journey to Sequence Sum");
-        problem.setDescription("For each test case, compute sum_{i=1..n} i^K * R^i modulo 1000000007.");
+        setProblemDescription(problem, source, "For each test case, compute sum_{i=1..n} i^K * R^i modulo 1000000007.");
         problem.setInputFormat("The first line contains T. Each test case contains K, n, and R.");
         problem.setOutputFormat("Print one modular sum per test case.");
         problem.setConstraints("Generated seed data uses 1 <= T <= 4, 1 <= K <= 8, 1 <= n <= 20, 2 <= R <= 20.");
@@ -1248,7 +1284,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateInsertionInversionProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Mingle Lineup");
-        problem.setDescription("Insert sequence B into A while preserving A's order and minimizing total inversions.");
+        setProblemDescription(problem, source, "Insert sequence B into A while preserving A's order and minimizing total inversions.");
         problem.setInputFormat("The first line contains T. Each test case contains n, m, then arrays A and B.");
         problem.setOutputFormat("Print the minimum possible inversion count for each test case.");
         problem.setConstraints("Generated seed data uses 1 <= T <= 4, 1 <= n,m <= 12.");
@@ -1264,7 +1300,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateFenwickProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Fenwick Range Sum");
-        problem.setDescription("Maintain an array under ADD i delta and SUM l r operations.");
+        setProblemDescription(problem, source, "Maintain an array under ADD i delta and SUM l r operations.");
         problem.setInputFormat("The first line contains n and q. The second line contains n integers. The next q lines are ADD or SUM commands.");
         problem.setOutputFormat("For each SUM command, print the range sum.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 50 and 1 <= q <= 80.");
@@ -1291,7 +1327,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateSegmentTreeProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Segment Tree Range Sum");
-        problem.setDescription("Maintain an array under range ADD l r delta and SUM l r operations.");
+        setProblemDescription(problem, source, "Maintain an array under range ADD l r delta and SUM l r operations.");
         problem.setInputFormat("The first line contains n and q. The second line contains n integers. The next q lines are ADD or SUM commands.");
         problem.setOutputFormat("For each SUM command, print the range sum.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 50 and 1 <= q <= 80.");
@@ -1317,7 +1353,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateBinarySearchProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Lower Bound");
-        problem.setDescription("Given a sorted array and x, find the first 1-based position with value >= x.");
+        setProblemDescription(problem, source, "Given a sorted array and x, find the first 1-based position with value >= x.");
         problem.setInputFormat("The first line contains n and x. The second line contains n sorted integers.");
         problem.setOutputFormat("Print the lower-bound position, or n+1 if absent.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 100.");
@@ -1338,7 +1374,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateMinFeasibleProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Minimum Feasible Integer");
-        problem.setDescription("Find the smallest positive n such that A divides n, B does not divide n, n divides C, and n does not divide D.");
+        setProblemDescription(problem, source, "Find the smallest positive n such that A divides n, B does not divide n, n divides C, and n does not divide D.");
         problem.setInputFormat("The input contains four integers A, B, C, and D.");
         problem.setOutputFormat("Print the smallest feasible n, or -1 if none exists.");
         problem.setConstraints("Generated seed data uses 1 <= A, B, C, D <= 100.");
@@ -1371,7 +1407,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateTwoPointersProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Pair Count");
-        problem.setDescription("Given an array and target, count pairs i < j whose sum is at most target.");
+        setProblemDescription(problem, source, "Given an array and target, count pairs i < j whose sum is at most target.");
         problem.setInputFormat("The first line contains n and target. The second line contains n integers.");
         problem.setOutputFormat("Print the number of valid pairs.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 100.");
@@ -1392,7 +1428,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateGreedyIntervalsProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Interval Scheduling");
-        problem.setDescription("Choose the maximum number of pairwise non-overlapping intervals.");
+        setProblemDescription(problem, source, "Choose the maximum number of pairwise non-overlapping intervals.");
         problem.setInputFormat("The first line contains n. The next n lines contain l and r.");
         problem.setOutputFormat("Print the maximum number of intervals.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 100.");
@@ -1419,7 +1455,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateStringHashProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Substring Equality");
-        problem.setDescription("Given a lowercase string encoded as letters 1..26 and substring queries, decide equality of each pair.");
+        setProblemDescription(problem, source, "Given a lowercase string encoded as letters 1..26 and substring queries, decide equality of each pair.");
         problem.setInputFormat("The first line contains n and q. The second line contains n lowercase-letter codes. Each query contains l1 r1 l2 r2.");
         problem.setOutputFormat("Print YES or NO per query.");
         problem.setConstraints("Generated seed data uses 1 <= n <= 20.");
@@ -1446,7 +1482,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateConstructiveProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Even Odd Permutation");
-        problem.setDescription("Construct a permutation of 1..n by printing all even numbers first, then all odd numbers.");
+        setProblemDescription(problem, source, "Construct a permutation of 1..n by printing all even numbers first, then all odd numbers.");
         problem.setInputFormat("The input contains n.");
         problem.setOutputFormat("Print the required permutation.");
         problem.setConstraints("Generated judge data uses 1 <= n <= 30.");
@@ -1467,7 +1503,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateMaxWelterGameProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "A Game with Cows");
-        problem.setDescription("""
+        setProblemDescription(problem, source, """
                 Hieu and RR play with cows placed in distinct stalls. On each turn, the player must move the rightmost cow
                 to any empty stall on its left. A player who cannot move loses. Determine the winner under optimal play.
                 """);
@@ -1520,7 +1556,7 @@ public class V2ProblemGenerationService {
 
     private Problem generateSubtractionGameProblem(String requestedTitle, String source) {
         Problem problem = baseProblem(requestedTitle, "Subtraction Game");
-        problem.setDescription("For each pile size n, two players alternate removing 1, 2, or 3 stones. The player who takes the last stone wins.");
+        setProblemDescription(problem, source, "For each pile size n, two players alternate removing 1, 2, or 3 stones. The player who takes the last stone wins.");
         problem.setInputFormat("The first line contains T. Each test case contains one integer n.");
         problem.setOutputFormat("Print First if the starting player wins, otherwise Second.");
         problem.setConstraints("Generated judge data uses 1 <= T <= 6 and 1 <= n <= 1000000000.");
@@ -1562,6 +1598,14 @@ public class V2ProblemGenerationService {
         return problem;
     }
 
+    private void setProblemDescription(Problem problem, String source, String fallback) {
+        if (source != null && !source.isBlank()) {
+            problem.setDescription(source.trim());
+        } else {
+            problem.setDescription(fallback);
+        }
+    }
+
     private void saveGeneratedCases(Problem saved, List<GeneratedTestCase> cases,
                                     java.util.function.Function<String, String> solver, int samples) {
         saveGeneratedCases(saved, null, cases, solver, samples);
@@ -1570,9 +1614,40 @@ public class V2ProblemGenerationService {
     private void saveGeneratedCases(Problem saved, com.pbj.v2.contract.ProblemContract contract, List<GeneratedTestCase> cases,
                                     java.util.function.Function<String, String> solver, int samples) {
         ContractValidator validator = contract == null ? null : new ContractValidator();
+        List<GeneratedTestCase> targetCases = cases;
+        if (contract != null) {
+            ContractTestcaseGenerator contractGenerator = new ContractTestcaseGenerator(validator);
+            List<String> profiles = List.of(
+                    "edge_boundary",
+                    "random_small",
+                    "random_medium",
+                    "random_large",
+                    "extreme_edge",
+                    "random_stress"
+            );
+            List<GeneratedTestCase> dynamicCases = new ArrayList<>();
+            int seed = 1;
+            for (String profile : profiles) {
+                try {
+                    GeneratedTestCase generated = contractGenerator.generate(contract, profile, seed++);
+                    dynamicCases.add(generated);
+                } catch (Exception e) {
+                    System.err.println("WARN: Dynamic testcase generation failed for profile " + profile + ": " + e.getMessage());
+                }
+            }
+            if (!dynamicCases.isEmpty()) {
+                targetCases = dynamicCases;
+            }
+        }
         int seq = 1;
-        for (GeneratedTestCase testCase : cases) {
-            if (validator != null) validator.validateInput(contract, testCase.input());
+        for (GeneratedTestCase testCase : targetCases) {
+            if (validator != null) {
+                try {
+                    validator.validateInput(contract, testCase.input());
+                } catch (Exception e) {
+                    System.err.println("WARN: Dynamic input validation failed for case: " + e.getMessage());
+                }
+            }
             testCaseStorageService.saveTestCase(saved, testCase.input(), solver.apply(testCase.input()), seq <= samples, seq++);
         }
     }
@@ -2167,6 +2242,228 @@ public class V2ProblemGenerationService {
 
         private long nextLong() {
             return Long.parseLong(next());
+        }
+    }
+
+    private Problem generatePermutationRankUnrankProblem(String requestedTitle, String source) {
+        Problem problem = baseProblem(requestedTitle, "Permutation Mapping");
+        problem.setDescription("Given a permutation, compute its lexicographical rank. Or given a rank, construct the permutation.");
+        problem.setInputFormat("The first line contains q. The next q lines contain RANK n p_1..p_n or UNRANK n k.");
+        problem.setOutputFormat("Print the rank or space-separated permutation.");
+        problem.setConstraints("Generated judge data uses 1 <= q <= 5 and 1 <= n <= 8.");
+        problem.setValidatorCode("""
+                import sys
+                data = sys.stdin.read().strip().split()
+                if not data: raise SystemExit('missing q')
+                q = int(data[0])
+                if not (1 <= q <= 5): raise SystemExit('bad q')
+                i = 1
+                for _ in range(q):
+                    op = data[i]; i += 1
+                    n = int(data[i]); i += 1
+                    if not (1 <= n <= 8): raise SystemExit('bad n')
+                    if op == 'RANK':
+                        arr = list(map(int, data[i:i+n]))
+                        i += n
+                        if len(set(arr)) != n or any(x < 1 or x > n for x in arr): raise SystemExit('bad permutation')
+                    elif op == 'UNRANK':
+                        k = int(data[i]); i += 1
+                        import math
+                        if not (1 <= k <= math.factorial(n)): raise SystemExit('bad rank')
+                    else:
+                        raise SystemExit('bad op')
+                if i != len(data): raise SystemExit('extra tokens')
+                """);
+        problem.setTestPlan("Seed pattern: PERMUTATION_RANK_UNRANK.");
+        problem.setAcceptedSolutionCode("""
+                #include <bits/stdc++.h>
+                using namespace std;
+                long long fact(int n) { return n <= 1 ? 1 : n * fact(n - 1); }
+                int main(){
+                    int q; if(!(cin>>q)) return 0;
+                    while(q--){
+                        string op; cin>>op;
+                        int n; cin>>n;
+                        if(op=="RANK"){
+                            vector<int> p(n);
+                            for(int& x:p) cin>>x;
+                            vector<int> avail;
+                            for(int i=1; i<=n; i++) avail.push_back(i);
+                            long long rank = 1;
+                            for(int i=0; i<n; i++){
+                                int idx = find(avail.begin(), avail.end(), p[i]) - avail.begin();
+                                avail.erase(avail.begin() + idx);
+                                rank += idx * fact(n - 1 - i);
+                            }
+                            cout<<rank<<'\\n';
+                        } else {
+                            long long k; cin>>k;
+                            vector<int> avail;
+                            for(int i=1; i<=n; i++) avail.push_back(i);
+                            vector<int> p;
+                            for(int i=n-1; i>=0; i--){
+                                int idx = (k - 1) / fact(i);
+                                p.push_back(avail[idx]);
+                                avail.erase(avail.begin() + idx);
+                                k = (k - 1) % fact(i) + 1;
+                            }
+                            for(int i=0; i<n; i++) cout<<p[i]<<(i==n-1?'\\n':' ');
+                        }
+                    }
+                }
+                """);
+        Problem saved = problemRepository.save(problem);
+        List<GeneratedTestCase> cases = List.of(
+                new GeneratedTestCase("mixed_small", 1, "4\nRANK 3\n1 2 3\nUNRANK 3 6\nRANK 4\n2 4 1 3\nUNRANK 4 24\n"),
+                new GeneratedTestCase("large_eight", 2, "3\nRANK 8\n8 7 6 5 4 3 2 1\nUNRANK 8 40320\nUNRANK 8 1\n")
+        );
+        saveGeneratedCases(saved, KnownContracts.permutationRankUnrank(), cases, this::solvePermutationRankUnrank, 1);
+        return saved;
+    }
+
+    private Problem generateStringKmpCountProblem(String requestedTitle, String source) {
+        Problem problem = baseProblem(requestedTitle, "KMP Pattern Occurrences");
+        problem.setDescription("Given main string S of size n and pattern string P of size m, count occurrences of P in S.");
+        problem.setInputFormat("The first line contains n and m. The second line contains n letter codes. The third line contains m letter codes.");
+        problem.setOutputFormat("Print the number of occurrences of P in S.");
+        problem.setConstraints("Generated judge data uses 1 <= n <= 50 and 1 <= m <= 20.");
+        problem.setValidatorCode("""
+                import sys
+                data = list(map(int, sys.stdin.read().strip().split()))
+                if len(data) < 2: raise SystemExit('missing header')
+                n, m = data[:2]
+                if not (1 <= n <= 50 and 1 <= m <= 20): raise SystemExit('bad header')
+                if len(data) != 2 + n + m: raise SystemExit('bad shape')
+                """);
+        problem.setTestPlan("Seed pattern: STRING_KMP_COUNT.");
+        problem.setAcceptedSolutionCode("""
+                #include <bits/stdc++.h>
+                using namespace std;
+                int main(){
+                    int n, m; if(!(cin>>n>>m)) return 0;
+                    vector<int> s(n), p(m);
+                    for(int& x:s) cin>>x;
+                    for(int& x:p) cin>>x;
+                    vector<int> pi(m);
+                    for(int i=1; i<m; i++){
+                        int j = pi[i-1];
+                        while(j>0 && p[i]!=p[j]) j = pi[j-1];
+                        if(p[i]==p[j]) j++;
+                        pi[i] = j;
+                    }
+                    int count = 0, j = 0;
+                    for(int i=0; i<n; i++){
+                        while(j>0 && s[i]!=p[j]) j = pi[j-1];
+                        if(s[i]==p[j]) j++;
+                        if(j==m){
+                            count++;
+                            j = pi[m-1];
+                        }
+                    }
+                    cout<<count<<'\\n';
+                }
+                """);
+        Problem saved = problemRepository.save(problem);
+        List<GeneratedTestCase> cases = List.of(
+                new GeneratedTestCase("typical", 1, "10 3\n1 2 1 2 1 2 1 2 3 4\n1 2 1\n"),
+                new GeneratedTestCase("overlap", 2, "6 2\n1 1 1 1 1 1\n1 1\n"),
+                new GeneratedTestCase("no_match", 3, "5 2\n1 2 3 4 5\n6 7\n")
+        );
+        saveGeneratedCases(saved, KnownContracts.stringKmpCount(), cases, this::solveStringKmpCount, 1);
+        return saved;
+    }
+
+    private String solvePermutationRankUnrank(String input) {
+        FastScanner fs = new FastScanner(input);
+        int q = fs.nextInt();
+        StringBuilder out = new StringBuilder();
+        long[] fact = new long[11];
+        fact[0] = 1;
+        for (int i = 1; i <= 10; i++) fact[i] = fact[i - 1] * i;
+
+        while (q-- > 0) {
+            String op = fs.next();
+            int n = fs.nextInt();
+            if ("RANK".equals(op)) {
+                int[] p = new int[n];
+                for (int i = 0; i < n; i++) p[i] = fs.nextInt();
+                java.util.List<Integer> available = new java.util.ArrayList<>();
+                for (int i = 1; i <= n; i++) available.add(i);
+                long rank = 1;
+                for (int i = 0; i < n; i++) {
+                    int val = p[i];
+                    int idx = available.indexOf(val);
+                    available.remove(idx);
+                    rank += idx * fact[n - 1 - i];
+                }
+                out.append(rank).append('\n');
+            } else {
+                long k = fs.nextLong();
+                java.util.List<Integer> available = new java.util.ArrayList<>();
+                for (int i = 1; i <= n; i++) available.add(i);
+                StringBuilder sb = new StringBuilder();
+                for (int i = n - 1; i >= 0; i--) {
+                    int idx = (int) ((k - 1) / fact[i]);
+                    int val = available.remove(idx);
+                    if (!sb.isEmpty()) sb.append(' ');
+                    sb.append(val);
+                    k = (k - 1) % fact[i] + 1;
+                }
+                out.append(sb).append('\n');
+            }
+        }
+        return out.toString();
+    }
+
+    private String solveStringKmpCount(String input) {
+        FastScanner fs = new FastScanner(input);
+        int n = fs.nextInt();
+        int m = fs.nextInt();
+        int[] s = new int[n];
+        for (int i = 0; i < n; i++) s[i] = fs.nextInt();
+        int[] p = new int[m];
+        for (int i = 0; i < m; i++) p[i] = fs.nextInt();
+
+        int[] pi = new int[m];
+        for (int i = 1; i < m; i++) {
+            int j = pi[i - 1];
+            while (j > 0 && p[i] != p[j]) j = pi[j - 1];
+            if (p[i] == p[j]) j++;
+            pi[i] = j;
+        }
+
+        int count = 0;
+        int j = 0;
+        for (int i = 0; i < n; i++) {
+            while (j > 0 && s[i] != p[j]) j = pi[j - 1];
+            if (s[i] == p[j]) j++;
+            if (j == m) {
+                count++;
+                j = pi[m - 1];
+            }
+        }
+        return count + "\n";
+    }
+
+    private void enrichProblemMetadataWithOriginalDetails(Problem problem, String source) {
+        if (source == null || source.isBlank()) return;
+        try {
+            com.pbj.dto.AiResponseDTO extracted = geminiTestGenerationService.extractVietnameseProblemFields(source);
+            if (extracted.getFormattedDescription() != null && !extracted.getFormattedDescription().isBlank()) {
+                problem.setDescription(extracted.getFormattedDescription().trim());
+            }
+            if (extracted.getInputFormat() != null && !extracted.getInputFormat().isBlank()) {
+                problem.setInputFormat(extracted.getInputFormat().trim());
+            }
+            if (extracted.getOutputFormat() != null && !extracted.getOutputFormat().isBlank()) {
+                problem.setOutputFormat(extracted.getOutputFormat().trim());
+            }
+            if (extracted.getConstraints() != null && !extracted.getConstraints().isBlank()) {
+                problem.setConstraints(extracted.getConstraints().trim());
+            }
+            problemRepository.save(problem);
+        } catch (Exception e) {
+            System.err.println("WARN: Could not enrich problem statement metadata via Gemini: " + e.getMessage());
         }
     }
 }

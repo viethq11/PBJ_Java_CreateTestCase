@@ -72,6 +72,9 @@ public class ProblemStructureClassifier {
     }
 
     private boolean isGridLike(String text) {
+        if (text.contains("gcd") || text.contains("greatest common divisor")) {
+            return false;
+        }
         return text.contains("grid")
                 || text.contains("matrix")
                 || text.contains("square units")
@@ -109,7 +112,10 @@ public class ProblemStructureClassifier {
     private boolean isCombinatorics(String text) {
         return containsAll(text, "permutation", "lexicographic", "index")
                 || containsAll(text, "how many different ways", "polygon")
-                || containsAll(text, "different ways", "choose", "polygon");
+                || containsAll(text, "different ways", "choose", "polygon")
+                || text.contains("polygon")
+                || text.contains("rank")
+                || text.contains("unrank");
     }
 
     private boolean isNumberTheory(String text) {
@@ -129,33 +135,34 @@ public class ProblemStructureClassifier {
     private boolean isString(String text) {
         return text.contains("string")
                 || text.contains("substring")
-                || text.contains("pattern");
+                || (text.contains("pattern") && (text.contains("match") || text.contains("character") || text.contains("alphabet") || text.contains("text")));
     }
 
     private boolean isNumericOverflowStress(String text) {
         return text.contains("64-bit")
                 || text.contains("long long")
                 || containsAll(text, "sum", "can exceed", "32-bit")
-                || containsAll(text, "sum", "10^9");
+                || containsAll(text, "sum", "exceed", "32-bit");
     }
 
     private boolean isGraphTree(String text) {
-        return text.contains("tree")
+        return (text.contains("tree") && !text.contains("street"))
                 || text.contains("graph")
                 || text.contains("vertices")
                 || text.contains("nodes")
                 || text.contains("edges")
                 || text.contains("n-1 edges")
-                || text.contains("path between");
+                || text.contains("path between")
+                || text.contains("dag")
+                || text.contains("topological");
     }
 
     private boolean isGameTheory(String text) {
-        return text.contains("winner")
-                || text.contains("wins")
-                || text.contains("loses")
-                || text.contains("optimal")
-                || text.contains("turns")
-                || text.contains("game");
+        if (text.contains("game") && (text.contains("stones") || text.contains("pile") || text.contains("cow") || text.contains("turn") || text.contains("play") || text.contains("player"))) {
+            return true;
+        }
+        return (text.contains("game") || text.contains("player") || text.contains("turns") || text.contains("cow") || text.contains("pile") || text.contains("stones") || text.contains("expected value") || text.contains("expected score"))
+                && (text.contains("winner") || text.contains("wins") || text.contains("loses") || text.contains("optimal") || text.contains("play") || text.contains("choices"));
     }
 
     private boolean isArray(String text) {
@@ -163,7 +170,9 @@ public class ProblemStructureClassifier {
                 || text.contains("permutation")
                 || text.contains("a_i")
                 || text.contains("n integers")
-                || containsAll(text, "second line", "n integers");
+                || containsAll(text, "second line", "n integers")
+                || text.contains("subarray")
+                || text.contains("kadane");
     }
 
     private boolean isGeneral(String text) {
@@ -183,7 +192,10 @@ public class ProblemStructureClassifier {
     }
 
     private boolean isScalarOnly(String text) {
-        return text.contains("input contains")
+        return (text.contains("input contains")
+                || text.contains("gcd")
+                || text.contains("greatest common divisor")
+                || text.contains("ucln"))
                 && !isArray(text)
                 && !isCommandBased(text)
                 && !isGraphTree(text);

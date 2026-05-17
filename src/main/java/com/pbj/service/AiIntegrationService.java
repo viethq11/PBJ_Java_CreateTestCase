@@ -182,8 +182,6 @@ public class AiIntegrationService {
         String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
         String pipelineKey = pipelineCacheKey(sourceFingerprint, count);
         evictCache(pipelineKey, "pipeline");
-        evictCache("problem_text_v2_" + generateHash(sourceFingerprint), "problem-text");
-        evictCache(PROBLEM_TEXT_CACHE_PREFIX + generateHash(sourceFingerprint), "problem-text-cleaned");
 
         String problemText = resolveProblemTextForCacheEviction(problemDescription, base64Images, sourceFingerprint);
         String normalizedProblemText = normalizeProblemText(problemText);
@@ -239,6 +237,16 @@ public class AiIntegrationService {
                     isBlank(recovered.getBruteForceLanguage()) ? "cpp" : recovered.getBruteForceLanguage());
         }
         return frozenDto;
+    }
+
+    public String resolveProblemTextBestEffort(String problemDescription, List<String> base64Images) {
+        String sourceFingerprint = sourceFingerprint(problemDescription, base64Images);
+        try {
+            return resolveProblemText(problemDescription, base64Images, sourceFingerprint);
+        } catch (RuntimeException e) {
+            System.err.println("WARN: Could not resolve OCR problem text for fallback: " + e.getMessage());
+            return ocrCleanerService.clean(problemDescription, "");
+        }
     }
 
     public void saveValidatedTestGeneration(String problemDescription, List<String> base64Images,

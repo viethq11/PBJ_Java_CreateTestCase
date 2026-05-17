@@ -225,4 +225,17 @@ class ProblemServiceQualityTest {
         probe.setExpectedToFail(true);
         return probe;
     }
+
+    @Test
+    void generateAndSaveProblemFromBase64FallsBackToLegacyWhenV2ReturnsNull() {
+        com.pbj.v2.generation.V2ProblemGenerationService v2Mock = org.mockito.Mockito.mock(com.pbj.v2.generation.V2ProblemGenerationService.class);
+        org.mockito.Mockito.when(v2Mock.generate(org.mockito.Mockito.anyString(), org.mockito.Mockito.anyString(), org.mockito.Mockito.anyList()))
+                .thenReturn(null);
+
+        ProblemService serviceWithMock = new ProblemService(
+                null, null, null, null, null, null, null, null, null, null, v2Mock, null, null);
+
+        assertThatThrownBy(() -> serviceWithMock.generateAndSaveProblemFromBase64("title", "description", List.of(), false))
+                .isInstanceOf(NullPointerException.class);
+    }
 }

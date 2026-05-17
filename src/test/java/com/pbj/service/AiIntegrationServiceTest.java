@@ -92,6 +92,7 @@ class AiIntegrationServiceTest {
                 testcaseGeneratorService,
                 verificationService,
                 new SemanticSpecValidationService(),
+                new OcrCleanerService(),
                 new ObjectMapper()
         );
 
@@ -145,6 +146,7 @@ class AiIntegrationServiceTest {
                 null,
                 mock(VerificationService.class),
                 new SemanticSpecValidationService(),
+                new OcrCleanerService(),
                 new ObjectMapper()
         );
 

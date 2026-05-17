@@ -1,8 +1,12 @@
 package com.pbj.service;
 
+import com.pbj.dto.AiProblemAnalysisDTO;
 import com.pbj.dto.SemanticSpecDTO;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -13,6 +17,27 @@ import java.util.regex.Pattern;
 @Service
 public class SemanticSpecValidationService {
     private static final Pattern PATH_CONDITION = Pattern.compile("path\\s*\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*,\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)");
+
+    public SemanticSpecDTO normalizeAndValidate(SemanticSpecDTO spec, AiProblemAnalysisDTO analysis) {
+        if (spec == null) {
+            throw new IllegalStateException("Semantic spec is missing.");
+        }
+
+        SemanticSpecDTO normalized = new SemanticSpecDTO();
+        normalized.setQueryVariables(uniqueClean(spec.getQueryVariables()));
+        normalized.setIgnoredVariables(uniqueClean(spec.getIgnoredVariables()));
+        normalized.setPaths(cleanPaths(spec.getPaths()));
+        normalized.setConditions(cleanConditions(spec.getConditions()));
+        normalized.setGraphType(cleanLower(firstNonBlank(spec.getGraphType(),
+                analysis == null ? null : analysis.getInputPattern())));
+        normalized.setValueDomain(spec.getValueDomain());
+        normalized.setInputModel(firstJson(spec.getInputModel(), analysis == null ? null : analysis.getInputModel()));
+        normalized.setConstraints(spec.getConstraints());
+        normalized.setCountedObjects(uniqueClean(spec.getCountedObjects()));
+        normalized.setOutputSemantics(cleanText(spec.getOutputSemantics()));
+        validate(normalized);
+        return normalized;
+    }
 
     public void validate(SemanticSpecDTO spec) {
         if (spec == null) {
@@ -93,6 +118,57 @@ public class SemanticSpecValidationService {
 
     private String cleanVariable(String variable) {
         return variable == null ? "" : variable.trim();
+    }
+
+    private List<String> uniqueClean(List<String> values) {
+        if (values == null) return List.of();
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (String value : values) {
+            String clean = cleanText(value);
+            if (!clean.isBlank()) out.add(clean);
+        }
+        return new ArrayList<>(out);
+    }
+
+    private List<List<String>> cleanPaths(List<List<String>> paths) {
+        if (paths == null) return List.of();
+        List<List<String>> out = new ArrayList<>();
+        for (List<String> path : paths) {
+            if (path == null) continue;
+            List<String> clean = uniqueClean(path);
+            if (!clean.isEmpty()) out.add(clean);
+        }
+        return out;
+    }
+
+    private List<String> cleanConditions(List<String> conditions) {
+        if (conditions == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String condition : conditions) {
+            String clean = cleanText(condition)
+                    .replaceAll("\\s+", " ")
+                    .replace("path(", "path(")
+                    .trim();
+            if (!clean.isBlank()) out.add(clean);
+        }
+        return out;
+    }
+
+    private JsonNode firstJson(JsonNode preferred, JsonNode fallback) {
+        return preferred != null && !preferred.isMissingNode() && !preferred.isNull() ? preferred : fallback;
+    }
+
+    private String firstNonBlank(String preferred, String fallback) {
+        return preferred != null && !preferred.isBlank() ? preferred : fallback;
+    }
+
+    private String cleanLower(String value) {
+        String clean = cleanText(value);
+        return clean.isBlank() ? clean : clean.toLowerCase(Locale.ROOT);
+    }
+
+    private String cleanText(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private String pathKey(String from, String to) {

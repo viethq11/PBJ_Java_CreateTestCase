@@ -27,6 +27,8 @@ public class AiIntegrationService {
     private static final String ANALYSIS_CACHE_PREFIX = "ollama_analysis_v6_grounded_";
     private static final String GEMINI_CACHE_PREFIX = "gemini_artifacts_v9_artifact_only_";
     private static final String PIPELINE_CACHE_PREFIX = "semantic_ir_pipeline_v12_";
+    private static final String PROBLEM_TEXT_CACHE_PREFIX = "problem_text_v3_cleaned_";
+    private static final String SEMANTIC_SPEC_CACHE_PREFIX = "semantic_spec_v1_";
 
     private final AiCacheRepository aiCacheRepository;
     private final AiJobQueueService aiJobQueueService;
@@ -37,6 +39,7 @@ public class AiIntegrationService {
     private final SystemTestcaseGeneratorService systemTestcaseGeneratorService;
     private final VerificationService verificationService;
     private final SemanticSpecValidationService semanticSpecValidationService;
+    private final OcrCleanerService ocrCleanerService;
     private final ObjectMapper objectMapper;
 
     public AiResponseDTO generateTestCases(String problemDescription, List<String> base64Images, int count) {
@@ -53,7 +56,7 @@ public class AiIntegrationService {
         }
 
         if (bypassCache) {
-            System.out.println("INFO: AI Cache bypass requested for final pipeline only. Hash: " + cacheKey);
+            System.out.println("INFO: AI Cache bypass requested for pipeline, OCR text, and semantic IR. Hash: " + cacheKey);
         }
 
         return aiJobQueueService.runQueued("pipeline:" + cacheKey, () -> generateTestCasesQueued(
@@ -68,18 +71,17 @@ public class AiIntegrationService {
         }
 
         geminiTestGenerationService.verifyApiKeysBeforePipeline();
-        String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint);
-        System.out.println("=== OCR PROBLEM TEXT ===");
+        String problemText = resolveProblemText(problemDescription, base64Images, sourceFingerprint, bypassCache);
+        System.out.println("=== CLEANED PROBLEM TEXT ===");
         System.out.println(problemText);
-        System.out.println("========================");
+        System.out.println("============================");
         
         // Step 1: Problem Analysis (Call 1)
         System.out.println("INFO: [AI Pipeline] Phase A1 - Gemini problem classification...");
         AiProblemAnalysisDTO analysis = geminiTestGenerationService.analyzeProblem(problemText);
 
         System.out.println("INFO: [AI Pipeline] Phase A2 - Gemini semantic IR extraction...");
-        SemanticSpecDTO semanticSpec = geminiTestGenerationService.extractSemanticSpec(problemText, analysis);
-        semanticSpecValidationService.validate(semanticSpec);
+        SemanticSpecDTO semanticSpec = resolveSemanticSpec(problemText, analysis, bypassCache);
         analysis.setSemanticSpec(semanticSpec);
         if (analysis.getInputModel() == null && semanticSpec.getInputModel() != null) {
             analysis.setInputModel(semanticSpec.getInputModel());
@@ -174,6 +176,7 @@ public class AiIntegrationService {
         String pipelineKey = pipelineCacheKey(sourceFingerprint, count);
         evictCache(pipelineKey, "pipeline");
         evictCache("problem_text_v2_" + generateHash(sourceFingerprint), "problem-text");
+        evictCache(PROBLEM_TEXT_CACHE_PREFIX + generateHash(sourceFingerprint), "problem-text-cleaned");
 
         String problemText = resolveProblemTextForCacheEviction(problemDescription, base64Images, sourceFingerprint);
         String normalizedProblemText = normalizeProblemText(problemText);
@@ -185,6 +188,7 @@ public class AiIntegrationService {
             evictCache(geminiKey, "gemini-artifacts");
         }
         evictCache(analysisKey, "ollama-analysis");
+        evictCacheByPrefix(SEMANTIC_SPEC_CACHE_PREFIX, "semantic-spec");
     }
 
     public String repairGenerator(AiResponseDTO dto, String previousGenerator, String validationError) {
@@ -233,15 +237,44 @@ public class AiIntegrationService {
         saveCache(pipelineCacheKey(sourceFingerprint, count), dto, "validated-pipeline");
     }
 
-    private String resolveProblemText(String problemDescription, List<String> base64Images, String sourceFingerprint) {
-        if (base64Images == null || base64Images.isEmpty()) {
-            return problemDescription != null ? problemDescription : "";
+    private SemanticSpecDTO resolveSemanticSpec(String problemText, AiProblemAnalysisDTO analysis, boolean bypassCache) {
+        String analysisKey;
+        try {
+            analysisKey = objectMapper.writeValueAsString(analysis);
+        } catch (Exception e) {
+            analysisKey = "";
+        }
+        String cacheKey = SEMANTIC_SPEC_CACHE_PREFIX + generateHash(normalizeProblemText(problemText) + "|" + analysisKey);
+        if (!bypassCache) {
+            Optional<SemanticSpecDTO> cachedSpec = readCache(cacheKey, SemanticSpecDTO.class, "semantic-spec");
+            if (cachedSpec.isPresent()) {
+                SemanticSpecDTO normalized = semanticSpecValidationService.normalizeAndValidate(cachedSpec.get(), analysis);
+                saveCache(cacheKey, normalized, "semantic-spec-normalized");
+                return normalized;
+            }
         }
 
-        String ocrKey = "problem_text_v2_" + generateHash(sourceFingerprint);
-        Optional<String> cachedText = readCache(ocrKey, String.class, "problem-text");
-        if (cachedText.isPresent()) {
-            return cachedText.get();
+        SemanticSpecDTO extracted = geminiTestGenerationService.extractSemanticSpec(problemText, analysis);
+        SemanticSpecDTO normalized = semanticSpecValidationService.normalizeAndValidate(extracted, analysis);
+        saveCache(cacheKey, normalized, "semantic-spec");
+        return normalized;
+    }
+
+    private String resolveProblemText(String problemDescription, List<String> base64Images, String sourceFingerprint) {
+        return resolveProblemText(problemDescription, base64Images, sourceFingerprint, false);
+    }
+
+    private String resolveProblemText(String problemDescription, List<String> base64Images, String sourceFingerprint, boolean bypassCache) {
+        if (base64Images == null || base64Images.isEmpty()) {
+            return ocrCleanerService.clean(problemDescription, "");
+        }
+
+        String ocrKey = PROBLEM_TEXT_CACHE_PREFIX + generateHash(sourceFingerprint);
+        if (!bypassCache) {
+            Optional<String> cachedText = readCache(ocrKey, String.class, "problem-text-cleaned");
+            if (cachedText.isPresent()) {
+                return cachedText.get();
+            }
         }
 
         System.out.println("INFO: [AI Pipeline] OCR - Gemini extracting problem text from image...");
@@ -250,24 +283,28 @@ public class AiIntegrationService {
             extractedText = geminiTestGenerationService.extractProblemText(problemDescription, base64Images);
         } catch (RuntimeException e) {
             System.err.println("WARN: Gemini OCR failed; falling back to text description. Cause: " + e.getMessage());
-            return problemDescription != null ? problemDescription : "(problem from attached image)";
+            return ocrCleanerService.clean(problemDescription, "(problem from attached image)");
         }
         if (extractedText == null || extractedText.isBlank()) {
             System.err.println("WARN: Gemini OCR failed; falling back to text description.");
-            return problemDescription != null ? problemDescription : "(problem from attached image)";
+            return ocrCleanerService.clean(problemDescription, "(problem from attached image)");
         }
-        saveCache(ocrKey, extractedText, "problem-text");
-        return extractedText;
+        System.out.println("=== OCR PROBLEM TEXT ===");
+        System.out.println(extractedText);
+        System.out.println("========================");
+        String cleanedText = ocrCleanerService.clean(extractedText, problemDescription);
+        saveCache(ocrKey, cleanedText, "problem-text-cleaned");
+        return cleanedText;
     }
 
     private String resolveProblemTextForCacheEviction(String problemDescription, List<String> base64Images, String sourceFingerprint) {
         if (base64Images == null || base64Images.isEmpty()) {
-            return problemDescription != null ? problemDescription : "";
+            return ocrCleanerService.clean(problemDescription, "");
         }
 
-        String ocrKey = "problem_text_v2_" + generateHash(sourceFingerprint);
+        String ocrKey = PROBLEM_TEXT_CACHE_PREFIX + generateHash(sourceFingerprint);
         Optional<String> cachedText = readCache(ocrKey, String.class, "problem-text-evict-lookup");
-        return cachedText.orElse(problemDescription != null ? problemDescription : "");
+        return cachedText.orElse(ocrCleanerService.clean(problemDescription, ""));
     }
 
     private String resolveAnalysisJson(String normalizedProblemText) {
@@ -317,6 +354,22 @@ public class AiIntegrationService {
             System.out.println("INFO: AI Cache Evicted for " + label + ". Hash: " + cacheKey);
         } catch (Exception e) {
             System.err.println("WARN: Failed to evict " + label + " from AI Cache: " + e.getMessage());
+        }
+    }
+
+    private void evictCacheByPrefix(String prefix, String label) {
+        try {
+            List<AiCache> entries = aiCacheRepository.findAll();
+            int deleted = 0;
+            for (AiCache entry : entries) {
+                if (entry.getRequestHash() != null && entry.getRequestHash().startsWith(prefix)) {
+                    aiCacheRepository.deleteByRequestHash(entry.getRequestHash());
+                    deleted++;
+                }
+            }
+            System.out.println("INFO: AI Cache Evicted " + deleted + " entries for " + label + ". Prefix: " + prefix);
+        } catch (Exception e) {
+            System.err.println("WARN: Failed to evict " + label + " by prefix: " + e.getMessage());
         }
     }
 
